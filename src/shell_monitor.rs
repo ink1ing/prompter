@@ -121,7 +121,12 @@ impl ShellMonitor {
                     }
                 }
                 Err(e) => {
-                    println!("  ⚠️  处理{}失败: {}", file_path.display(), e);
+                    // 初始扫描时显示详细错误信息
+                    if e.to_string().contains("UTF-8") {
+                        println!("  📝 {} (已处理编码问题，继续监控)", file_path.display());
+                    } else {
+                        println!("  ⚠️  跳过 {}: {}", file_path.display(), e);
+                    }
                 }
             }
         }
@@ -203,7 +208,10 @@ impl ShellMonitor {
                         total_new_commands += count;
                     }
                     Err(e) => {
-                        println!("⚠️  处理{}失败: {}", file_path.display(), e);
+                        // 定时扫描时不显示重复的UTF-8错误
+                        if !e.to_string().contains("UTF-8") {
+                            println!("⚠️  跳过 {}: {}", file_path.display(), e);
+                        }
                     }
                 }
             }
@@ -218,7 +226,23 @@ impl ShellMonitor {
 
     /// 处理单个历史文件
     async fn process_history_file(&mut self, file_path: &Path, is_initial_scan: bool) -> anyhow::Result<usize> {
-        let content = fs::read_to_string(file_path)?;
+        // 安全读取文件，处理非UTF-8字符
+        let content = match fs::read_to_string(file_path) {
+            Ok(content) => content,
+            Err(e) => {
+                // 如果UTF-8读取失败，尝试以字节方式读取并转换
+                match fs::read(file_path) {
+                    Ok(bytes) => {
+                        // 使用 lossy conversion，将无效UTF-8字符替换为占位符
+                        String::from_utf8_lossy(&bytes).to_string()
+                    }
+                    Err(_) => {
+                        return Err(anyhow::anyhow!("无法读取文件: {}", e));
+                    }
+                }
+            }
+        };
+
         let mut new_commands = 0;
 
         // 根据shell类型解析历史格式
