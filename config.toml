@@ -1,0 +1,36 @@
+# Prompter 自动化配置
+[app]
+name = "prompter"
+version = "1.0.0"
+auto_upload_enabled = true
+upload_interval_hours = 1
+
+[filter]
+# 中文检测设置
+detect_chinese = true
+min_chinese_chars = 3
+exclude_commands = ["/", "quit", "exit", "help"]
+
+[cloudflare]
+# Cloudflare 配置 (需要填写)
+account_id = ""  # 你的 Cloudflare Account ID
+zone_id = ""     # 你的域名 Zone ID
+api_token = ""   # API Token (需要 Zone:Edit 权限)
+
+[website]
+# 网站配置
+domain = ""      # 你的域名，如: example.com
+upload_endpoint = "/api/prompts"  # 上传接口路径
+github_repo = "" # GitHub 仓库，如: username/repo-name
+
+[storage]
+# 本地存储配置
+data_dir = "./data"
+prompts_file = "prompts.md"
+backup_dir = "./backups"
+max_backups = 10
+
+[logging]
+level = "info"
+file = "prompter.log"
+max_size_mb = 50
