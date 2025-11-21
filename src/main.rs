@@ -64,6 +64,7 @@ mod chinese_filter;
 mod cloudflare_uploader;
 mod auto_scheduler;
 mod shell_monitor;
+mod session_monitor;
 
 #[derive(Parser)]
 #[command(name = "prompter")]
@@ -100,6 +101,10 @@ struct Args {
     /// Enable independent shell monitoring mode (no PTY wrapping)
     #[arg(long)]
     shell_monitor: bool,
+
+    /// Enable Claude Code session monitoring mode (monitor active processes)
+    #[arg(long)]
+    session_monitor: bool,
 }
 
 #[derive(Debug)]
@@ -239,6 +244,9 @@ async fn main() -> Result<()> {
     } else if args.shell_monitor {
         // 独立Shell监控模式
         run_shell_monitor_mode(&args).await?;
+    } else if args.session_monitor {
+        // Claude Code会话监控模式
+        run_session_monitor_mode(&args).await?;
     } else if args.simple {
         // 使用简化版本
         simple_monitor::run_simple_monitor()?;
@@ -424,6 +432,42 @@ async fn run_shell_monitor_mode(args: &Args) -> Result<()> {
     // 等待中断信号
     tokio::signal::ctrl_c().await?;
     println!("⏹️  Shell监控服务已停止");
+
+    Ok(())
+}
+
+/// Claude Code会话监控模式 - 监控活跃进程交互
+async fn run_session_monitor_mode(args: &Args) -> Result<()> {
+    println!("🎯 启动Claude Code会话监控模式...");
+
+    // 加载配置
+    let config = load_config(&args.config)?;
+
+    // 创建中文过滤器
+    let chinese_filter = ChineseFilter::new(
+        config.filter.min_chinese_chars,
+        &config.filter.exclude_commands,
+    )?;
+
+    // 创建会话监控器
+    let mut session_monitor = session_monitor::SessionMonitor::new(chinese_filter)?;
+
+    println!("🔍 会话监控已启动，正在监控Claude Code进程交互:");
+    println!("  - 活跃Claude进程检测");
+    println!("  - tmux会话监控");
+    println!("  - 进程输入输出捕获");
+    println!("📁 中文提示词将保存到: ./data/claude_session_prompts.md");
+    println!();
+    println!("🔧 如需结合自动上传功能，请使用: --auto --session-monitor");
+    println!("⏹️  按 Ctrl+C 停止监控");
+    println!();
+
+    // 启动会话监控
+    session_monitor.start_session_monitoring().await?;
+
+    // 等待中断信号
+    tokio::signal::ctrl_c().await?;
+    println!("⏹️  会话监控服务已停止");
 
     Ok(())
 }

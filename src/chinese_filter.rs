@@ -28,6 +28,11 @@ impl ChineseFilter {
         })
     }
 
+    /// 检测文本是否包含中文字符
+    pub fn contains_chinese(&self, text: &str) -> bool {
+        self.chinese_regex.is_match(text)
+    }
+
     /// 检测文本是否包含足够的中文字符
     pub fn contains_sufficient_chinese(&self, text: &str) -> bool {
         let chinese_count = self.chinese_regex.find_iter(text).count();
