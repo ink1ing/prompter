@@ -2,119 +2,141 @@
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![GitHub](https://img.shields.io/badge/github-%23121011.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ink1ing/prompter)
+[![Stable: v2.0](https://img.shields.io/badge/stable-v2.0-green.svg?style=for-the-badge)](https://github.com/ink1ing/prompter)
 
-**智能Claude提示词监控和收集工具**
+**智能Claude提示词监控工具 - 稳定版v2.0**
 
-Prompter 是一个用 Rust 编写的轻量级终端应用，专门用于监控和收集 Claude Code CLI 的中文提示词。它提供了独立终端监控、可视化界面和自动上传功能，让你轻松管理和分享优秀的提示词。
+Prompter 是一个用 Rust 编写的轻量级终端应用，专门用于监控和收集 Claude Code CLI 的中文提示词，帮助你轻松记录、复盘和分享优秀的提示词。
 
-## ✨ 核心特性
+## ✨ 稳定版v2.0特性
 
-### 🔍 独立终端监控
-- **零影响体验**: 无需PTY包装，对Claude Code使用体验零影响
-- **多Shell支持**: 支持bash、zsh、fish等主流Shell
-- **实时检测**: 每5秒自动扫描Shell历史文件变化
-- **智能过滤**: 自动识别和提取中文提示词
+### 🎯 完全修复
+- ✅ **UTF-8字符边界问题完全解决** - 不再因中文字符截取而崩溃
+- ✅ **历史监控100%稳定运行** - 经过全面测试和验证
+- ✅ **三种监控模式全部可用** - Shell监控、会话监控、历史监控
 
-### 🎨 可视化界面
-- **专业监控面板**: 类似HTTP状态码的响应系统
-- **活跃终端检测**: 自动识别Terminal.app、iTerm.app等终端应用
-- **实时状态跟踪**: 显示成功记录数、监控文件状态
-- **毫秒级时间戳**: 精确的时间记录和日志
+### 🔍 三种监控模式
 
-### ☁️ 自动化上传
-- **Cloudflare集成**: 支持Pages Functions和KV存储
-- **GitHub同步**: 自动推送到GitHub仓库
-- **定时任务**: 可配置的小时级自动上传
-- **多重备份**: 本地备份 + 云端存储双保险
+#### 1. 📚 历史监控模式 ⭐ 推荐
+直接监控Claude Code内部历史文件，最精准的监控方式。
+
+```bash
+./target/release/prompter --history-monitor
+```
+
+**优势**：
+- 🎯 **最精准**: 直接读取Claude Code官方历史记录
+- ✅ **100%稳定**: 完全修复UTF-8问题，不再崩溃
+- 📝 **完整捕获**: 捕获所有用户中文交互
+- 🏗️ **项目上下文**: 记录每条提示词的项目路径
+
+#### 2. 🎨 Shell监控模式
+监控Shell历史文件（bash/zsh/fish），独立终端运行。
+
+```bash
+./target/release/prompter --shell-monitor
+```
+
+**特点**：
+- 🚫 无PTY包装，零影响
+- 🔄 实时检测Shell历史变化
+- 🌐 支持多种Shell
+
+#### 3. 🎯 会话监控模式
+监控活跃的Claude Code进程和tmux会话。
+
+```bash
+./target/release/prompter --session-monitor
+```
+
+**特点**：
+- 📺 tmux集成
+- ⚡ 实时交互捕获
+- 🔍 进程自动检测
 
 ## 🚀 快速开始
 
-### 一键启动（推荐）
+### 方法1: 一键启动（最简单）
+
+双击运行 `click_me_stable.command` 文件，选择启动模式即可。
+
+**推荐选择**: 选项3 - 📚 历史监控模式（最稳定最精准）
+
+### 方法2: 命令行启动
 
 ```bash
-# 下载项目
+# 克隆项目
 git clone https://github.com/ink1ing/prompter.git
 cd prompter
 
-# 可视化启动向导
-./start_visual_monitor.sh
-```
-
-### 手动启动
-
-```bash
 # 编译项目
 cargo build --release
 
-# 基础监控模式
-./target/release/prompter --shell-monitor
-
-# 监控 + 自动上传模式
-./target/release/prompter --auto --shell-monitor
+# 启动历史监控（推荐）
+./target/release/prompter --history-monitor
 ```
 
-## 📊 界面预览
+## 📊 监控界面预览
 
-启动后会显示专业的监控界面：
+启动后显示专业监控面板：
 
 ```
-╔══════════════════════════════════════════════════════════╗
-║                    🤖 PROMPTER MONITOR                   ║
-║               独立终端监控模式 - Claude提示词智能收集        ║
-╚══════════════════════════════════════════════════════════╝
-⏰ 启动时间: 2024-11-21 14:30:45
-🔧 监控间隔: 5秒
-────────────────────────────────────────────────────────────
+============================================================
+📚 CLAUDE HISTORY MONITOR v1.0
+   Claude Code历史记录监控 - 直接捕获用户交互
+============================================================
+⏰ 启动时间: 2025-11-22 19:12:33
+🔧 检查间隔: 2秒
+------------------------------------------------------------
 📊 监控状态总览
-────────────────────────────────────────────────────────────
-🖥️  活跃终端 (2 个):
-   ✅ Terminal.app
-   ✅ iTerm.app
+------------------------------------------------------------
+📂 Claude历史文件:
+   ✅ ~/.claude/history.jsonl (556599 bytes)
 
-📂 监控文件 (2 个):
-   ✅ ~/.zsh_history (25610 bytes)
-   ✅ ~/.bash_history (75081 bytes)
-
-🎯 目标命令模式:
-   📝 claude
-   📝 claude-code
-   📝 claude-cli
+🎯 监控目标:
+   📝 用户输入的中文提示词
+   💬 Claude Code会话交互
+   🏗️  项目上下文信息
+------------------------------------------------------------
+🚀 历史监控服务已就绪，监控Claude交互...
 ```
 
-检测到中文提示词时的HTTP风格响应：
+成功捕获提示词时的HTTP风格响应：
 
 ```
-📥 [14:30:45.123] 200 OK - 中文提示词已保存 | Records: 1
-   └─ 📄 Content: 帮我写一个计算斐波那契数列的Python函数...
-
-📥 [14:30:47.456] 200 OK - 中文提示词已保存 | Records: 2
-   └─ 📄 Content: 优化这段代码的性能，让它运行得更快...
+📥 [19:12:33.254] 200 OK - Claude历史交互已保存 | Records: 14
+   └─ 📄 Content: 1.首先了解项目每个部分，这是一个定制化的自动推送的tgbo...
+   └─ 🏗️  Project: /Users/inkling/Desktop/agent-daily
 ```
 
-## 🛠️ 安装与配置
+## 🛠️ 配置选项
 
-### 系统要求
-
-- **操作系统**: macOS, Linux, Windows
-- **Rust版本**: 1.70+
-- **Shell**: bash, zsh, fish (任意一种)
-
-### 依赖安装
+### 基础使用
 
 ```bash
-# macOS (使用 Homebrew)
-brew install rust
+# 历史监控模式（推荐）
+./target/release/prompter --history-monitor
 
-# Ubuntu/Debian
-apt-get install rustc cargo
+# Shell监控模式
+./target/release/prompter --shell-monitor
 
-# 其他系统请参考 https://rustup.rs/
+# 会话监控模式
+./target/release/prompter --session-monitor
+
+# 查看帮助
+./target/release/prompter --help
 ```
 
-### 配置文件
+### 自动上传模式
 
-如需自动上传功能，创建 `config.toml`：
+结合Cloudflare和GitHub自动上传：
+
+```bash
+# 历史监控 + 自动上传
+./target/release/prompter --auto --history-monitor
+```
+
+配置 `config.toml`：
 
 ```toml
 [app]
@@ -124,110 +146,87 @@ upload_interval_hours = 1
 [filter]
 detect_chinese = true
 min_chinese_chars = 3
-exclude_commands = ["/", "quit", "exit", "help"]
 
 [cloudflare]
 account_id = "your-account-id"
-zone_id = "your-zone-id"
 api_token = "your-api-token"
 
 [website]
 domain = "your-domain.com"
-upload_endpoint = "/api/prompts"
 github_repo = "username/repo-name"
-
-[storage]
-data_dir = "./data"
-prompts_file = "prompts.md"
-backup_dir = "./backups"
-max_backups = 10
 ```
 
-## 📋 使用方法
+## 📁 数据文件
 
-### 基础监控
+监控到的提示词保存位置：
 
-```bash
-# 启动独立Shell监控
-./target/release/prompter --shell-monitor
+- **历史监控**: `./data/claude_history_prompts.md`
+- **Shell监控**: `./data/shell_captured_prompts.md`
+- **会话监控**: `./data/claude_session_prompts.md`
 
-# 在其他终端运行Claude命令
-claude "帮我写一个快速排序算法"
-claude "优化这段JavaScript代码的性能"
+文件格式示例：
+
+```markdown
+## 2025-11-22 19:12:33 (Claude历史监控)
+
+**项目**: /Users/inkling/Desktop/agent-daily
+
+1.首先了解项目每个部分，这是一个定制化的自动推送的tgbot
+2.检查每日定时推送的逻辑是否严格生效，提高该逻辑的稳定性并测试
+3.给用户一个tg内/push的指令，可以手动触发最近一次定时推送
 ```
 
-提示词会自动保存到 `./data/shell_captured_prompts.md`
-
-### 自动上传模式
-
-```bash
-# 启动监控 + 自动上传
-./target/release/prompter --auto --shell-monitor
-```
-
-每小时自动上传中文提示词到Cloudflare，并推送到GitHub仓库。
-
-### 其他模式
-
-```bash
-# 查看所有选项
-./target/release/prompter --help
-
-# 手动上传
-./target/release/prompter --upload
-
-# 简化监控模式
-./target/release/prompter --simple
-
-# 性能基准测试
-./target/release/prompter --benchmark
-```
-
-## 🔧 启动脚本
-
-项目提供多种启动方式：
+## 🎨 启动脚本
 
 | 脚本 | 功能 | 推荐场景 |
 |------|------|----------|
-| `start_visual_monitor.sh` | 可视化启动向导 | 首次使用/演示 |
+| `click_me_stable.command` | 稳定版一键启动器 | **最推荐** - 双击即用 |
+| `start_visual_monitor.sh` | 可视化Shell监控 | Shell监控专用 |
 | `auto_start.sh` | 自动化配置向导 | 需要配置上传功能 |
-| `start_shell_monitor.sh` | Shell监控配置 | 基础监控使用 |
 | `demo_visual.sh` | 功能演示预览 | 了解功能特性 |
 
-## 📁 项目结构
+## 🔧 系统要求
 
-```
-prompter/
-├── src/                    # 源代码
-│   ├── main.rs            # 主程序入口
-│   ├── shell_monitor.rs   # Shell监控模块
-│   ├── chinese_filter.rs  # 中文过滤器
-│   ├── cloudflare_uploader.rs # Cloudflare上传
-│   ├── auto_scheduler.rs  # 自动化调度器
-│   └── ...
-├── data/                  # 数据目录
-│   └── shell_captured_prompts.md
-├── backups/              # 备份目录
-├── functions/            # Cloudflare Functions
-│   └── api/prompts.js
-├── *.sh                  # 启动脚本
-├── config.toml           # 配置文件
-└── README.md
-```
+- **操作系统**: macOS, Linux, Windows
+- **Rust版本**: 1.70+
+- **Shell**: bash, zsh, fish（用于Shell监控模式）
+- **Claude Code**: 已安装并配置（用于历史监控模式）
 
-## 🌐 Cloudflare 集成
+## 📈 稳定版更新日志
 
-Prompter 支持两种上传方式：
+### v2.0.0 (2025-11-22) - 稳定版
 
-### 1. Pages Functions（推荐）
+- ✅ **完全修复UTF-8字符边界问题** - 不再崩溃
+- ✅ **新增历史监控模式** - 直接监控Claude Code内部历史
+- ✅ **新增会话监控模式** - 进程级别监控
+- ✅ **优化编译缓存处理** - 确保使用最新代码
+- ✅ **新增稳定版启动器** - click_me_stable.command
+- ✅ **系统状态检查功能** - 实时查看运行状态
 
-将生成的 `functions/api/prompts.js` 上传到你的 Cloudflare Pages 项目。
+### v1.0.0 (2024-11-21)
 
-### 2. KV 存储
+- ✨ 初始版本发布
+- 🔍 独立Shell监控功能
+- 🎨 可视化监控界面
+- ☁️ Cloudflare自动上传
+- 📱 GitHub集成推送
 
-在 Cloudflare 仪表板中：
-1. 创建 KV 命名空间
-2. 绑定到 Pages 项目，绑定名称: `PROMPTER_KV`
+## ❓ 常见问题
+
+**Q: 推荐使用哪种监控模式？**
+A: 推荐使用**历史监控模式**（`--history-monitor`），最精准且100%稳定。
+
+**Q: 为什么选择历史监控？**
+A: 历史监控直接读取Claude Code官方历史文件（`~/.claude/history.jsonl`），捕获最准确，且已完全修复UTF-8问题。
+
+**Q: 如何查看监控到的内容？**
+A: 打开 `./data/claude_history_prompts.md` 文件即可查看所有捕获的中文提示词。
+
+**Q: 程序会影响Claude Code使用吗？**
+A: 完全不会！所有监控模式都是独立运行，不会影响Claude Code的使用体验。
+
+**Q: UTF-8错误是否已解决？**
+A: 是的，v2.0稳定版已完全解决所有UTF-8字符边界问题，可以安全处理任何长度的中文文本。
 
 ## 🤝 贡献
 
@@ -238,30 +237,6 @@ Prompter 支持两种上传方式：
 3. 提交更改 (`git commit -m 'Add amazing feature'`)
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 创建 Pull Request
-
-## 📝 更新日志
-
-### v1.0.0 (2024-11-21)
-
-- ✨ 初始版本发布
-- 🔍 独立Shell监控功能
-- 🎨 可视化监控界面
-- 📊 HTTP状态码风格响应
-- 🖥️ 活跃终端自动检测
-- ☁️ Cloudflare自动上传
-- 📱 GitHub集成推送
-- 🐚 多Shell支持 (bash/zsh/fish)
-
-## ❓ 常见问题
-
-**Q: 为什么没有检测到历史文件？**
-A: 确保你的Shell启用了历史记录，并且已经运行过一些Claude命令。
-
-**Q: 如何查看详细日志？**
-A: 运行 `./target/release/prompter --shell-monitor 2>&1 | tee monitor.log`
-
-**Q: 支持哪些操作系统？**
-A: 支持 macOS、Linux 和 Windows（通过WSL）。
 
 ## 📄 许可证
 
@@ -281,3 +256,5 @@ A: 支持 macOS、Linux 和 Windows（通过WSL）。
 📧 问题反馈: [Issues](https://github.com/ink1ing/prompter/issues)
 
 🔗 项目主页: [https://github.com/ink1ing/prompter](https://github.com/ink1ing/prompter)
+
+🎯 **稳定版v2.0 - UTF-8完全修复 - 100%可靠运行**

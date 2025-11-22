@@ -65,6 +65,7 @@ mod cloudflare_uploader;
 mod auto_scheduler;
 mod shell_monitor;
 mod session_monitor;
+mod claude_history_monitor;
 
 #[derive(Parser)]
 #[command(name = "prompter")]
@@ -105,6 +106,10 @@ struct Args {
     /// Enable Claude Code session monitoring mode (monitor active processes)
     #[arg(long)]
     session_monitor: bool,
+
+    /// Enable Claude Code history monitoring mode (monitor ~/.claude/history.jsonl)
+    #[arg(long)]
+    history_monitor: bool,
 }
 
 #[derive(Debug)]
@@ -247,6 +252,9 @@ async fn main() -> Result<()> {
     } else if args.session_monitor {
         // Claude Code会话监控模式
         run_session_monitor_mode(&args).await?;
+    } else if args.history_monitor {
+        // Claude Code历史监控模式
+        run_history_monitor_mode(&args).await?;
     } else if args.simple {
         // 使用简化版本
         simple_monitor::run_simple_monitor()?;
@@ -468,6 +476,42 @@ async fn run_session_monitor_mode(args: &Args) -> Result<()> {
     // 等待中断信号
     tokio::signal::ctrl_c().await?;
     println!("⏹️  会话监控服务已停止");
+
+    Ok(())
+}
+
+/// Claude Code历史监控模式 - 监控~/.claude/history.jsonl
+async fn run_history_monitor_mode(args: &Args) -> Result<()> {
+    println!("📚 启动Claude Code历史监控模式...");
+
+    // 加载配置
+    let config = load_config(&args.config)?;
+
+    // 创建中文过滤器
+    let chinese_filter = ChineseFilter::new(
+        config.filter.min_chinese_chars,
+        &config.filter.exclude_commands,
+    )?;
+
+    // 创建历史监控器
+    let mut history_monitor = claude_history_monitor::ClaudeHistoryMonitor::new(chinese_filter)?;
+
+    println!("📝 历史监控已启动，正在监控Claude Code交互记录:");
+    println!("  - ~/.claude/history.jsonl 文件监控");
+    println!("  - 实时JSON记录解析");
+    println!("  - 用户输入提示词捕获");
+    println!("📁 中文提示词将保存到: ./data/claude_history_prompts.md");
+    println!();
+    println!("🔧 如需结合自动上传功能，请使用: --auto --history-monitor");
+    println!("⏹️  按 Ctrl+C 停止监控");
+    println!();
+
+    // 启动历史监控
+    history_monitor.start_history_monitoring().await?;
+
+    // 等待中断信号
+    tokio::signal::ctrl_c().await?;
+    println!("⏹️  历史监控服务已停止");
 
     Ok(())
 }
