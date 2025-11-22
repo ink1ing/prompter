@@ -48,10 +48,26 @@ impl ClaudeHistoryMonitor {
         // 启动实时监控
         let mut file_check_interval = interval(Duration::from_secs(2));
 
-        loop {
-            file_check_interval.tick().await;
-            self.check_history_file_changes().await?;
+        println!("🎯 监控已启动，按 Ctrl+C 停止...");
+        println!();
+
+        // 监控主循环，等待 Ctrl+C 信号
+        tokio::select! {
+            _ = async {
+                loop {
+                    file_check_interval.tick().await;
+                    if let Err(e) = self.check_history_file_changes().await {
+                        eprintln!("⚠️ 文件检查错误: {}", e);
+                    }
+                }
+            } => {},
+            _ = tokio::signal::ctrl_c() => {
+                println!("\n🛑 收到停止信号，正在关闭监控服务...");
+                return Ok(());
+            }
         }
+
+        Ok(())
     }
 
     /// 扫描现有历史记录

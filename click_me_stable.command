@@ -25,38 +25,16 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 打开新终端窗口并运行
-open_terminal_and_run() {
+# 在当前终端直接运行命令
+run_in_current_terminal() {
     local command="$1"
 
-    # 检测当前终端类型
-    if [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
-        osascript <<EOF
-tell application "Terminal"
-    activate
-    do script "cd '$SCRIPT_DIR' && $command"
-end tell
-EOF
-    elif [[ "$TERM_PROGRAM" == "iTerm.app" ]] || [[ -n "$ITERM_SESSION_ID" ]]; then
-        osascript <<EOF
-tell application "iTerm"
-    activate
-    create window with default profile
-    tell current session of current window
-        write text "cd '$SCRIPT_DIR' && $command"
-    end tell
-end tell
-EOF
-    else
-        open -a Terminal "$SCRIPT_DIR"
-        sleep 2
-        osascript <<EOF
-tell application "Terminal"
-    activate
-    do script "$command" in front window
-end tell
-EOF
-    fi
+    echo ""
+    echo -e "${GREEN}🚀 启动中...${NC}"
+    echo ""
+
+    # 直接执行命令而不是打开新终端
+    eval "$command"
 }
 
 # 主启动界面
@@ -94,7 +72,7 @@ show_main_menu() {
     case $choice in
         1)
             echo -e "${GREEN}启动Shell监控模式...${NC}"
-            open_terminal_and_run "./start_visual_monitor.sh"
+            run_in_current_terminal "./start_visual_monitor.sh"
             ;;
         2)
             echo -e "${GREEN}启动会话监控模式...${NC}"
@@ -102,7 +80,7 @@ show_main_menu() {
                 echo "正在编译项目..."
                 cargo build --release > /dev/null 2>&1
             fi
-            open_terminal_and_run "./target/release/prompter --session-monitor"
+            run_in_current_terminal "./target/release/prompter --session-monitor"
             ;;
         3)
             echo -e "${GREEN}启动历史监控模式（稳定版）...${NC}"
@@ -110,7 +88,7 @@ show_main_menu() {
                 echo "正在编译项目..."
                 cargo build --release > /dev/null 2>&1
             fi
-            open_terminal_and_run "./target/release/prompter --history-monitor"
+            run_in_current_terminal "./target/release/prompter --history-monitor"
             ;;
         4)
             echo -e "${GREEN}启动快速监控模式...${NC}"
@@ -118,11 +96,11 @@ show_main_menu() {
                 echo "正在编译项目..."
                 cargo build --release > /dev/null 2>&1
             fi
-            open_terminal_and_run "./target/release/prompter --shell-monitor"
+            run_in_current_terminal "./target/release/prompter --shell-monitor"
             ;;
         5)
             echo -e "${GREEN}启动自动化配置模式...${NC}"
-            open_terminal_and_run "./auto_start.sh"
+            run_in_current_terminal "./auto_start.sh"
             ;;
         6)
             show_system_status
