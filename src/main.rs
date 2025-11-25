@@ -630,7 +630,8 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
 
     // 检测配置状态
     let has_gemini = !ai_config.gemini_api_key.is_empty()
-        && ai_config.gemini_api_key != "YOUR_GEMINI_API_KEY";
+        && ai_config.gemini_api_key != "YOUR_GEMINI_API_KEY"
+        && ai_config.gemini_api_key != "YOUR_NEW_API_KEY_HERE";  // 新增检测
     let has_telegram = !ai_config.telegram_bot_token.is_empty()
         && ai_config.telegram_bot_token != "YOUR_TELEGRAM_BOT_TOKEN";
 
