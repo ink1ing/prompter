@@ -391,7 +391,9 @@ impl TelegramBot {
         println!("💡 支持的命令:");
         println!("   /based-on-time <小时数> - 设置基于时间的反馈间隔");
         println!("   /based-on-number <提示词数> - 设置基于数量的反馈间隔");
+        println!("   /prompt <系统提示词> - 自定义Gemini分析提示词");
         println!("   /status - 查看当前配置状态");
+        println!("   /report - 生成总体分析报告");
         println!("   /help - 显示帮助信息\n");
 
         let mut retry_count = 0;
@@ -507,6 +509,9 @@ impl TelegramBot {
             }
             "/report" => {
                 self.handle_report_command().await
+            }
+            "/prompt" => {
+                self.handle_prompt_command(text).await
             }
             "/help" | "/start" => {
                 self.handle_help_command().await
@@ -690,6 +695,10 @@ impl TelegramBot {
             设置基于数量的反馈间隔\n\
             示例: <code>/based-on-number 100</code>\n\
             \n\
+            🎨 <b>/prompt</b> &lt;新系统提示词&gt;\n\
+            自定义Gemini分析提示词的系统提示\n\
+            示例: <code>/prompt 你是一位专业的提示词优化专家...</code>\n\
+            \n\
             📈 <b>/status</b>\n\
             查看当前配置状态\n\
             \n\
@@ -702,6 +711,142 @@ impl TelegramBot {
             💡 <i>每次新设置会自动覆盖旧设置</i>"
             .to_string()
         )
+    }
+
+    /// 处理系统提示词设置命令
+    async fn handle_prompt_command(&self, text: &str) -> Result<String> {
+        // 提取 /prompt 之后的所有内容作为新的系统提示词
+        let new_prompt = text.strip_prefix("/prompt")
+            .unwrap_or("")
+            .trim();
+
+        if new_prompt.is_empty() {
+            return Ok(
+                "⚠️ <b>用法说明</b>\n\
+                \n\
+                /prompt &lt;新系统提示词&gt;\n\
+                \n\
+                📝 <b>示例:</b>\n\
+                <code>/prompt 你是一位专业的AI提示词优化专家，负责审视用户与Claude Code的交互...</code>\n\
+                \n\
+                💡 <b>提示:</b>\n\
+                • 系统提示词用于指导Gemini如何分析你的提示词\n\
+                • 建议包含分析标准、输出格式等要求\n\
+                • 设置后会立即生效并保存到配置文件"
+                .to_string()
+            );
+        }
+
+        // 保存到配置文件
+        match Self::save_system_prompt_to_config(new_prompt).await {
+            Ok(()) => {
+                let preview = if new_prompt.len() > 100 {
+                    format!("{}...", &new_prompt[..100])
+                } else {
+                    new_prompt.to_string()
+                };
+
+                Ok(format!(
+                    "✅ <b>系统提示词已更新</b>\n\
+                    \n\
+                    📝 新提示词预览:\n\
+                    <code>{}</code>\n\
+                    \n\
+                    💾 已保存到: <code>config.toml</code>\n\
+                    🔄 重启程序后生效\n\
+                    \n\
+                    💡 <i>此提示词将用于指导Gemini分析你的提示词质量</i>",
+                    preview
+                ))
+            }
+            Err(e) => {
+                Ok(format!(
+                    "❌ <b>保存失败</b>\n\
+                    \n\
+                    错误信息: {}\n\
+                    \n\
+                    请检查文件权限或联系管理员",
+                    e
+                ))
+            }
+        }
+    }
+
+    /// 保存系统提示词到配置文件
+    async fn save_system_prompt_to_config(new_prompt: &str) -> Result<()> {
+        use std::path::Path;
+        use tokio::io::AsyncWriteExt;
+
+        let config_path = Path::new("config.toml");
+
+        // 读取现有配置
+        let content = if config_path.exists() {
+            tokio::fs::read_to_string(config_path).await?
+        } else {
+            String::new()
+        };
+
+        // 查找是否已有 system_prompt 配置
+        let mut new_content = String::new();
+        let mut found_prompt = false;
+        let mut in_ai_feedback = false;
+
+        for line in content.lines() {
+            // 检测是否进入 [ai_feedback] 区块
+            if line.trim() == "[ai_feedback]" {
+                in_ai_feedback = true;
+                new_content.push_str(line);
+                new_content.push('\n');
+                continue;
+            }
+
+            // 检测是否离开当前区块
+            if line.trim().starts_with('[') && line.trim() != "[ai_feedback]" {
+                // 如果在 ai_feedback 区块但还没找到 system_prompt，添加它
+                if in_ai_feedback && !found_prompt {
+                    new_content.push_str(&format!("system_prompt = \"\"\"\n{}\n\"\"\"\n", new_prompt));
+                    found_prompt = true;
+                }
+                in_ai_feedback = false;
+            }
+
+            // 替换现有的 system_prompt
+            if in_ai_feedback && (line.trim().starts_with("system_prompt =") || line.trim().starts_with("system_prompt=")) {
+                // 跳过旧的 system_prompt（包括多行格式）
+                found_prompt = true;
+                new_content.push_str(&format!("system_prompt = \"\"\"\n{}\n\"\"\"\n", new_prompt));
+
+                // 如果是多行字符串格式，跳过后续行直到结束
+                continue;
+            }
+
+            // 跳过旧的多行 system_prompt 内容
+            if found_prompt && line.trim() == "\"\"\"" {
+                found_prompt = false; // 重置标记，表示已完成替换
+                continue;
+            }
+
+            if !found_prompt || !in_ai_feedback {
+                new_content.push_str(line);
+                new_content.push('\n');
+            }
+        }
+
+        // 如果没有找到 [ai_feedback] 区块，添加一个
+        if !found_prompt {
+            if !in_ai_feedback {
+                new_content.push_str("\n[ai_feedback]\n");
+            }
+            new_content.push_str(&format!("system_prompt = \"\"\"\n{}\n\"\"\"\n", new_prompt));
+        }
+
+        // 写入文件
+        let mut file = tokio::fs::File::create(config_path).await?;
+        file.write_all(new_content.as_bytes()).await?;
+        file.sync_all().await?;
+
+        println!("✅ 系统提示词已保存到 config.toml");
+        Ok(())
     }
 }
 
