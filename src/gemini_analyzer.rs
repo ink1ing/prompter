@@ -14,6 +14,7 @@ pub struct GeminiConfig {
     pub thinking_budget: i32,         // 思考预算
     pub auto_fallback: bool,          // 自动降级
     pub max_retries: usize,           // 最大重试次数
+    pub system_prompt: String,        // 系统提示词
 }
 
 impl Default for GeminiConfig {
@@ -26,6 +27,7 @@ impl Default for GeminiConfig {
             thinking_budget: 1024,                              // 默认思考预算
             auto_fallback: true,                                // 默认启用自动降级
             max_retries: 3,                                     // 默认最大重试3次
+            system_prompt: String::new(),                       // 默认空,由调用方提供
         }
     }
 }
@@ -153,8 +155,13 @@ impl GeminiAnalyzer {
 
     /// 分析单个提示词（支持思考模型和自动降级）
     async fn analyze_single_prompt(&self, prompt: &str) -> Result<PromptAnalysis> {
-        let analysis_prompt = format!(
-            "请分析以下Claude Code用户提示词，提供专业的改进建议：
+        // 使用系统提示词 + 用户提示词内容
+        let analysis_prompt = if !self.config.system_prompt.is_empty() {
+            format!("{}\n\n# 用户提示词内容\n\n\"{}\"", self.config.system_prompt, prompt)
+        } else {
+            // 如果没有系统提示词,使用默认格式
+            format!(
+                "请分析以下Claude Code用户提示词，提供专业的改进建议：
 
 提示词内容：
 \"{}\"
@@ -167,8 +174,9 @@ impl GeminiAnalyzer {
 5. 具体改进建议：给出1-3条具体的改写建议
 
 请用中文回复，格式清晰，重点突出。",
-            prompt
-        );
+                prompt
+            )
+        };
 
         // 先尝试使用思考模型
         match self.try_thinking_model(&analysis_prompt).await {

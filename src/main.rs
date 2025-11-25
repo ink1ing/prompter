@@ -601,6 +601,7 @@ async fn run_test_feedback(args: &Args) -> Result<()> {
         thinking_budget: ai_config.thinking_budget,
         auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
+        system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
     };
 
@@ -783,6 +784,7 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
         thinking_budget: ai_config.thinking_budget,
         auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
+        system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
     };
 
@@ -959,6 +961,7 @@ async fn run_auto_feedback_mode(args: &Args) -> Result<()> {
         thinking_budget: ai_config.thinking_budget,
         auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
+        system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
     };
 
@@ -1102,9 +1105,18 @@ fn load_ai_feedback_config(_config: &Config) -> Result<AiFeedbackConfig> {
                         ai_config.max_retries = num;
                     }
                 }
+                "system_prompt" => {
+                    // 处理系统提示词
+                    ai_config.system_prompt = key_value.1;
+                }
                 _ => {}
             }
         }
+    }
+
+    // 如果配置中没有system_prompt，使用默认值
+    if ai_config.system_prompt.is_empty() {
+        ai_config.system_prompt = AiFeedbackConfig::default_system_prompt();
     }
 
     // 不再强制验证配置，让调用方决定是否需要交互式配置
@@ -1270,7 +1282,7 @@ fn confirm_action(prompt: &str) -> Result<()> {
 }
 
 /// AI反馈配置结构
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AiFeedbackConfig {
     enabled: bool,
     gemini_api_key: String,
@@ -1285,6 +1297,8 @@ struct AiFeedbackConfig {
     thinking_budget: i32,
     auto_fallback: bool,
     max_retries: usize,
+    // 系统提示词 - 用于指导Gemini如何分析用户提示词
+    system_prompt: String,
 }
 
 impl Default for AiFeedbackConfig {
@@ -1302,6 +1316,50 @@ impl Default for AiFeedbackConfig {
             thinking_budget: 1024,
             auto_fallback: true,
             max_retries: 3,
+            system_prompt: Self::default_system_prompt(),
         }
+    }
+}
+
+impl AiFeedbackConfig {
+    /// 默认的系统提示词 - 指导Gemini如何分析Claude Code提示词
+    fn default_system_prompt() -> String {
+        r#"你是一位专业的AI提示词(Prompt)优化专家，专门负责审视用户与编码模型Claude Code的交互。
+
+你的职责是：
+
+1. **评估提示词质量**
+   - 分析提示词的清晰度、完整性和有效性
+   - 识别提示词是否遵循LLM最佳实践
+   - 评估是否包含足够的上下文和具体要求
+
+2. **给出改进建议**
+   - 对不足或不够清楚的提示词提出具体、可操作的优化建议
+   - 指出缺失的关键信息或上下文
+   - 提供改写示例(如有必要)
+
+3. **肯定优秀实践**
+   - 识别并肯定用户优秀的提示词写法
+   - 说明为什么这些提示词写得好
+   - 鼓励继续使用有效的沟通模式
+
+4. **遵循LLM最佳实践**
+   - 具体性：提示词应该明确、具体，而非模糊笼统
+   - 结构性：复杂任务应该分步骤说明
+   - 上下文：提供足够的背景信息
+   - 约束条件：明确说明限制和期望
+   - 示例：在合适时提供示例
+
+5. **输出格式**
+   - 用中文回复，简洁专业
+   - 重点突出，直击要害
+   - 控制在200-400字之间
+   - 使用Markdown格式化
+
+注意事项：
+- 保持客观、建设性的语气
+- 不要过度批评，而是提供实用建议
+- 对于已经很好的提示词，简短肯定即可
+- 对于有明显问题的提示词，给出3-5条具体改进建议"#.to_string()
     }
 }
