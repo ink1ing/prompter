@@ -42,119 +42,88 @@ show_main_menu() {
     clear
     echo -e "${BLUE}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║                🤖 PROMPTER STABLE v2.0                 ║"
+    echo "║                🤖 PROMPTER STABLE v2.1                 ║"
     echo "║                   一键启动菜单                           ║"
-    echo "║               ✅ UTF-8问题已完全修复                    ║"
+    echo "║         ✅ UTF-8修复 + 📱 Telegram集成                 ║"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
-    echo -e "${GREEN}🎉 稳定版特性:${NC}"
+    echo -e "${GREEN}🎉 v2.1 特性:${NC}"
     echo -e "${WHITE}   • UTF-8字符边界问题完全修复${NC}"
-    echo -e "${WHITE}   • 中文文本截取不再崩溃${NC}"
     echo -e "${WHITE}   • 历史监控100%稳定运行${NC}"
+    echo -e "${WHITE}   • Telegram命令监听器已集成${NC}"
+    echo -e "${WHITE}   • 支持反馈间隔智能配置${NC}"
     echo ""
     echo -e "${WHITE}选择启动模式:${NC}"
     echo ""
-    echo -e "${CYAN}1.${NC} 🎨 Shell监控模式"
-    echo -e "${CYAN}2.${NC} 🎯 会话监控模式"
-    echo -e "${CYAN}3.${NC} 📚 历史监控模式 ${GREEN}(推荐 ⭐ 已完全修复)${NC}"
-    echo -e "${CYAN}4.${NC} ⚡ 快速监控"
-    echo -e "${CYAN}5.${NC} 🔧 自动化配置"
-    echo -e "${CYAN}6.${NC} 📊 系统状态"
-    echo -e "${CYAN}7.${NC} ❓ 帮助"
+    echo -e "${CYAN}1.${NC} 📁 基础模式 - 本地检测存储"
+    echo -e "${WHITE}     • 仅本地检测提示词${NC}"
+    echo -e "${WHITE}     • 保存到本地路径${NC}"
+    echo -e "${WHITE}     • 轻量级,无需AI分析${NC}"
     echo ""
-    echo -e "${YELLOW}💡 推荐选择 '3' 历史监控模式（100%稳定）${NC}"
+    echo -e "${CYAN}2.${NC} 🤖 标准模式 - Gemini智能分析 ${GREEN}(推荐 ⭐)${NC}"
+    echo -e "${WHITE}     • Gemini AI深度分析提示词${NC}"
+    echo -e "${WHITE}     • Telegram实时反馈和报告${NC}"
+    echo -e "${WHITE}     • 支持时间/数量间隔配置${NC}"
+    echo ""
+    echo -e "${CYAN}3.${NC} 🚀 大力王模式 - MCP外部集成"
+    echo -e "${WHITE}     • 连接外部MCP服务器${NC}"
+    echo -e "${WHITE}     • 扩展功能和集成${NC}"
+    echo -e "${WHITE}     • 🔮 敬请期待...${NC}"
+    echo ""
+    echo -e "${YELLOW}💡 推荐选择 '2' 标准模式${NC}"
     echo ""
 
-    read -p "请选择 (1-7) [3]: " choice
-    choice=${choice:-3}
+    read -p "请选择 (1-3) [2]: " choice
+    choice=${choice:-2}
 
     case $choice in
         1)
-            echo -e "${GREEN}启动Shell监控模式...${NC}"
-            run_in_current_terminal "./start_visual_monitor.sh"
-            ;;
-        2)
-            echo -e "${GREEN}启动会话监控模式...${NC}"
-            if [ ! -f "./target/release/prompter" ]; then
-                echo "正在编译项目..."
-                cargo build --release > /dev/null 2>&1
-            fi
-            run_in_current_terminal "./target/release/prompter --session-monitor"
-            ;;
-        3)
-            echo -e "${GREEN}启动历史监控模式（稳定版）...${NC}"
+            # 基础模式 - 本地检测存储
+            echo -e "${GREEN}启动基础模式 - 本地检测存储...${NC}"
+            echo ""
             if [ ! -f "./target/release/prompter" ]; then
                 echo "正在编译项目..."
                 cargo build --release > /dev/null 2>&1
             fi
             run_in_current_terminal "./target/release/prompter --history-monitor"
             ;;
-        4)
-            echo -e "${GREEN}启动快速监控模式...${NC}"
+        2)
+            # 标准模式 - Gemini智能分析 + Telegram反馈
+            echo -e "${GREEN}启动标准模式 - Gemini智能分析...${NC}"
+            echo ""
             if [ ! -f "./target/release/prompter" ]; then
                 echo "正在编译项目..."
                 cargo build --release > /dev/null 2>&1
             fi
-            run_in_current_terminal "./target/release/prompter --shell-monitor"
+            run_in_current_terminal "./target/release/prompter --telegram-listen"
             ;;
-        5)
-            echo -e "${GREEN}启动自动化配置模式...${NC}"
-            run_in_current_terminal "./auto_start.sh"
-            ;;
-        6)
-            show_system_status
-            ;;
-        7)
-            show_help
+        3)
+            # 大力王模式 - MCP外部集成
+            echo -e "${GREEN}大力王模式 - MCP外部集成${NC}"
+            echo ""
+            echo -e "${CYAN}🔮 敬请期待...${NC}"
+            echo ""
+            echo -e "${YELLOW}💡 当前可用模式:${NC}"
+            echo -e "   1. 基础模式 - 本地检测存储"
+            echo -e "   2. 标准模式 - Gemini智能分析 + Telegram反馈"
+            echo ""
+            sleep 3
+            show_main_menu
             ;;
         *)
-            echo -e "${RED}无效选择，请重试${NC}"
-            sleep 1
-            show_main_menu
+            echo -e "${RED}无效选择，使用默认模式（标准模式）${NC}"
+            echo ""
+            if [ ! -f "./target/release/prompter" ]; then
+                echo "正在编译项目..."
+                cargo build --release > /dev/null 2>&1
+            fi
+            run_in_current_terminal "./target/release/prompter --telegram-listen"
             ;;
     esac
 }
 
-# 显示系统状态
-show_system_status() {
-    clear
-    echo -e "${BLUE}📊 Prompter 稳定版系统状态${NC}"
-    echo ""
-    echo -e "${WHITE}运行中的监控进程:${NC}"
-    
-    local history_monitor=$(ps aux | grep "prompter.*history-monitor" | grep -v grep | wc -l)
-    
-    if [ $history_monitor -gt 0 ]; then
-        echo -e "${GREEN}   ✅ 历史监控模式: 运行中${NC}"
-    else
-        echo -e "${YELLOW}   ⏸️  历史监控模式: 未运行${NC}"
-    fi
-    
-    echo ""
-    echo -e "${WHITE}稳定版状态:${NC}"
-    echo -e "${GREEN}   ✅ UTF-8字符边界问题: 已修复${NC}"
-    echo -e "${GREEN}   ✅ 中文文本截取崩溃: 已修复${NC}"
-    echo -e "${GREEN}   ✅ 历史监控稳定性: 100%${NC}"
-    
-    echo ""
-    read -p "按Enter返回主菜单..."
-    show_main_menu
-}
-
-# 显示帮助
-show_help() {
-    clear
-    echo -e "${BLUE}🤖 Prompter 稳定版 v2.0${NC}"
-    echo ""
-    echo -e "${GREEN}稳定版更新:${NC}"
-    echo -e "  • 完全修复UTF-8字符边界崩溃问题"
-    echo -e "  • 历史监控模式100%稳定运行"
-    echo -e "  • 推荐使用历史监控模式（选项3）"
-    echo ""
-    read -p "按Enter返回主菜单..."
-    show_main_menu
-}
+# (已移除系统状态和帮助功能)
 
 # 欢迎信息
 print_welcome() {
@@ -168,7 +137,7 @@ print_welcome() {
     echo "                        /_/                     "
     echo -e "${NC}"
     echo -e "${CYAN}🤖 智能Claude提示词监控工具${NC}"
-    echo -e "${GREEN}📍 稳定版 v2.0 • UTF-8完全修复${NC}"
+    echo -e "${GREEN}📍 稳定版 v2.1 • Telegram集成版${NC}"
     echo ""
     sleep 2
 }

@@ -69,7 +69,6 @@ mod claude_history_monitor;
 mod ai_feedback_config;
 mod gemini_analyzer;
 mod telegram_bot;
-mod feedback_interval;
 
 #[derive(Parser)]
 #[command(name = "prompter")]
@@ -126,10 +125,6 @@ struct Args {
     /// Test AI feedback system configuration
     #[arg(long)]
     test_feedback: bool,
-
-    /// Start Telegram bot command listener
-    #[arg(long)]
-    telegram_listen: bool,
 
     /// Show AI feedback system help and usage examples
     #[arg(long)]
@@ -285,9 +280,6 @@ async fn main() -> Result<()> {
     } else if args.test_feedback {
         // 测试AI反馈系统
         run_test_feedback(&args).await?;
-    } else if args.telegram_listen {
-        // 启动Telegram命令监听器
-        run_telegram_listener(&args).await?;
     } else if args.help_feedback {
         // 显示AI反馈系统帮助
         show_ai_feedback_help();
@@ -617,267 +609,6 @@ async fn run_test_feedback(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// 启动Telegram命令监听器
-async fn run_telegram_listener(args: &Args) -> Result<()> {
-    println!("🎧 Telegram Bot 命令监听器");
-    println!("{}", "=".repeat(50));
-    println!();
-
-    // 加载配置
-    let config = load_config(&args.config)?;
-    let mut ai_config = load_ai_feedback_config(&config)?;
-
-    // 检测配置状态
-    let has_gemini = !ai_config.gemini_api_key.is_empty()
-        && ai_config.gemini_api_key != "YOUR_GEMINI_API_KEY";
-    let has_telegram = !ai_config.telegram_bot_token.is_empty()
-        && ai_config.telegram_bot_token != "YOUR_TELEGRAM_BOT_TOKEN";
-
-    println!("📊 配置检测:");
-    println!("   Gemini API: {}", if has_gemini { "✅ 已配置" } else { "❌ 未配置" });
-    println!("   Telegram Bot: {}", if has_telegram { "✅ 已配置" } else { "❌ 未配置" });
-    println!();
-
-    // 如果缺少配置，引导用户输入
-    if !has_gemini || !has_telegram {
-        println!("💡 检测到配置缺失，现在开始配置...\n");
-
-        // 配置Gemini API
-        if !has_gemini {
-            println!("🤖 配置Gemini API");
-            println!("{}", "-".repeat(50));
-            println!("📖 Gemini API用于分析您的提示词并提供优化建议");
-            println!("🔗 获取API密钥: https://aistudio.google.com/api-keys");
-            println!();
-
-            print!("请输入Gemini API Key: ");
-            std::io::Write::flush(&mut std::io::stdout())?;
-
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            ai_config.gemini_api_key = input.trim().to_string();
-
-            if ai_config.gemini_api_key.is_empty() {
-                println!("⚠️ 未输入API Key，将跳过Gemini配置");
-            } else {
-                println!("✅ Gemini API Key已保存\n");
-            }
-        }
-
-        // 配置Telegram Bot
-        if !has_telegram {
-            println!("📱 配置Telegram Bot");
-            println!("{}", "-".repeat(50));
-            println!("🤖 用于接收命令和推送AI分析报告");
-            println!("🔗 创建Bot: https://t.me/BotFather");
-            println!("💡 步骤: 1) 向@BotFather发送 /newbot");
-            println!("        2) 按提示设置名称和用户名");
-            println!("        3) 复制得到的Token");
-            println!();
-
-            print!("请输入Telegram Bot Token: ");
-            std::io::Write::flush(&mut std::io::stdout())?;
-
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            ai_config.telegram_bot_token = input.trim().to_string();
-
-            if ai_config.telegram_bot_token.is_empty() {
-                anyhow::bail!("❌ Telegram Bot Token不能为空，无法启动监听器");
-            }
-
-            println!("✅ Telegram Bot Token已保存");
-            println!();
-            println!("📝 重要提示: 请先在Telegram中向机器人发送任意消息（如 /start）");
-            println!("   这样系统才能自动获取您的Chat ID\n");
-        }
-
-        // 保存配置到文件
-        println!("💾 正在保存配置到 config.toml...");
-        save_ai_config_to_file(&args.config, &ai_config)?;
-        println!("✅ 配置已保存\n");
-    }
-
-    println!("📋 Telegram Bot配置:");
-    if ai_config.telegram_bot_token.len() > 20 {
-        println!("   Token: {}...{}",
-            &ai_config.telegram_bot_token[..10],
-            &ai_config.telegram_bot_token[ai_config.telegram_bot_token.len()-10..]);
-    } else {
-        println!("   Token: (已配置)");
-    }
-    if !ai_config.telegram_chat_id.is_empty() {
-        println!("   Chat ID: {}", ai_config.telegram_chat_id);
-    }
-    println!();
-
-    // 显示当前反馈间隔配置
-    println!("📊 当前反馈间隔配置:");
-    match feedback_interval::FeedbackInterval::load() {
-        Ok(interval) => {
-            println!("{}\n", interval.get_config_description());
-        }
-        Err(e) => {
-            println!("   ⚠️ 加载配置失败: {}", e);
-            println!("   💡 将使用默认配置（每24小时）\n");
-        }
-    }
-
-    // 创建Telegram Bot
-    let telegram_config = telegram_bot::TelegramConfig {
-        bot_token: ai_config.telegram_bot_token,
-        chat_id: ai_config.telegram_chat_id,
-        ..Default::default()
-    };
-
-    let mut bot = telegram_bot::TelegramBot::new(telegram_config)?;
-
-    // 测试连接
-    println!("🔧 测试Bot连接...");
-    match bot.test_connection().await {
-        Ok(_) => println!("✅ 连接成功\n"),
-        Err(e) => {
-            println!("❌ 连接失败: {}", e);
-            println!("💡 请检查Bot Token是否正确");
-            return Ok(());
-        }
-    }
-
-    // 获取Bot信息
-    if let Ok(bot_info) = bot.get_bot_info().await {
-        println!("🤖 {}", bot_info);
-    }
-    println!();
-
-    // 直接启动标准模式 - Gemini智能分析 + Telegram反馈
-    println!("🤖 标准模式 - Gemini智能分析");
-    println!("{}", "=".repeat(50));
-    println!();
-    println!("💡 功能说明:");
-    println!("   • 监控Claude Code提示词");
-    println!("   • Gemini AI深度分析和优化建议");
-    println!("   • Telegram实时推送反馈报告");
-    println!("   • 支持命令配置反馈间隔:");
-    println!("     /based-on-time <小时>   - 时间间隔");
-    println!("     /based-on-number <数量> - 数量间隔");
-    println!("     /status                 - 查看状态");
-    println!("     /help                   - 显示帮助");
-    println!();
-    println!("🎧 监听器已启动，等待命令...");
-    println!("   按 Ctrl+C 停止");
-    println!();
-
-    // 发送启动通知
-    if let Err(e) = bot.send_startup_notification().await {
-        println!("⚠️ 发送启动通知失败: {}", e);
-    }
-
-    // 并发运行两个任务:
-    // 1. Telegram命令监听
-    // 2. Claude历史监控(实时显示200状态)
-
-    let mut bot_clone = bot.clone();
-    let command_listener = tokio::spawn(async move {
-        if let Err(e) = bot_clone.start_command_listener().await {
-            eprintln!("❌ 命令监听器错误: {}", e);
-        }
-    });
-
-    let history_monitor = tokio::spawn(async move {
-        if let Err(e) = run_history_monitor_with_status().await {
-            eprintln!("❌ 历史监控错误: {}", e);
-        }
-    });
-
-    // 等待任意一个任务结束
-    tokio::select! {
-        _ = command_listener => println!("📱 命令监听器已停止"),
-        _ = history_monitor => println!("📊 历史监控已停止"),
-    }
-
-    Ok(())
-}
-
-/// 历史监控 - 带HTTP状态码风格输出
-async fn run_history_monitor_with_status() -> Result<()> {
-    use std::collections::HashSet;
-
-    println!("📊 开始监控Claude Code提示词...");
-    println!();
-
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    let history_file = if shell.contains("zsh") {
-        format!("{}/.zsh_history", std::env::var("HOME").unwrap_or_default())
-    } else {
-        format!("{}/.bash_history", std::env::var("HOME").unwrap_or_default())
-    };
-
-    let mut seen_prompts = HashSet::new();
-    let mut last_size = 0u64;
-
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-
-        if let Ok(metadata) = tokio::fs::metadata(&history_file).await {
-            let current_size = metadata.len();
-
-            if current_size > last_size {
-                if let Ok(content) = tokio::fs::read_to_string(&history_file).await {
-                    let filter = crate::chinese_filter::ChineseFilter::new(10, &[]).unwrap();
-                    for line in content.lines().rev().take(50) {
-                        if filter.contains_sufficient_chinese(line) {
-                            let chinese = filter.extract_chinese_content(line);
-                            if !seen_prompts.contains(&chinese) && chinese.len() >= 10 {
-                                seen_prompts.insert(chinese.clone());
-
-                                // HTTP状态码风格输出
-                                let timestamp = chrono::Local::now().format("%H:%M:%S");
-                                let preview = if chinese.len() > 60 {
-                                    format!("{}...", &chinese[..60])
-                                } else {
-                                    chinese.clone()
-                                };
-
-                                println!("[{}] 200 ✅ 记录成功 | {}", timestamp, preview);
-
-                                // 保存到本地
-                                if let Err(e) = save_prompt_to_local(&chinese).await {
-                                    eprintln!("[{}] 500 ❌ 保存失败 | {}", timestamp, e);
-                                }
-                            }
-                        }
-                    }
-                }
-                last_size = current_size;
-            }
-        }
-    }
-}
-
-/// 保存提示词到本地文件
-async fn save_prompt_to_local(prompt: &str) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-
-    let data_dir = std::path::Path::new("./data");
-    if !data_dir.exists() {
-        tokio::fs::create_dir_all(data_dir).await?;
-    }
-
-    let file_path = data_dir.join("prompts.md");
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file_path)
-        .await?;
-
-    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let entry = format!("\n## {}\n\n{}\n\n---\n", timestamp, prompt);
-
-    file.write_all(entry.as_bytes()).await?;
-
-    Ok(())
-}
-
 /// AI自动反馈模式 - 定期分析并推送
 async fn run_auto_feedback_mode(args: &Args) -> Result<()> {
     println!("🤖 启动AI自动反馈模式...");
@@ -1046,56 +777,16 @@ fn load_ai_feedback_config(_config: &Config) -> Result<AiFeedbackConfig> {
         }
     }
 
-    // 不再强制验证配置，让调用方决定是否需要交互式配置
-    Ok(ai_config)
-}
-
-/// 保存AI反馈配置到文件
-fn save_ai_config_to_file(config_path: &PathBuf, ai_config: &AiFeedbackConfig) -> Result<()> {
-    // 读取现有配置
-    let config_content = std::fs::read_to_string(config_path)
-        .unwrap_or_else(|_| include_str!("../config.toml").to_string());
-
-    // 更新配置内容
-    let mut updated_lines = Vec::new();
-    let mut in_ai_feedback_section = false;
-
-    for line in config_content.lines() {
-        let trimmed_line = line.trim();
-
-        // 检查是否进入AI反馈配置段
-        if trimmed_line == "[ai_feedback]" {
-            in_ai_feedback_section = true;
-            updated_lines.push(line.to_string());
-            continue;
-        }
-
-        // 检查是否离开AI反馈配置段
-        if trimmed_line.starts_with('[') && trimmed_line != "[ai_feedback]" && in_ai_feedback_section {
-            in_ai_feedback_section = false;
-        }
-
-        if in_ai_feedback_section {
-            if trimmed_line.starts_with("enabled") {
-                updated_lines.push(format!("enabled = {}                    # 系统启用状态", ai_config.enabled));
-            } else if trimmed_line.starts_with("gemini_api_key") {
-                updated_lines.push(format!("gemini_api_key = \"{}\"                # Gemini API密钥", ai_config.gemini_api_key));
-            } else if trimmed_line.starts_with("telegram_bot_token") {
-                updated_lines.push(format!("telegram_bot_token = \"{}\"            # Telegram Bot Token", ai_config.telegram_bot_token));
-            } else if trimmed_line.starts_with("telegram_chat_id") {
-                updated_lines.push(format!("telegram_chat_id = \"{}\"              # Chat ID", ai_config.telegram_chat_id));
-            } else {
-                updated_lines.push(line.to_string());
-            }
-        } else {
-            updated_lines.push(line.to_string());
-        }
+    // 验证必要配置
+    if ai_config.gemini_api_key.is_empty() || ai_config.gemini_api_key == "YOUR_GEMINI_API_KEY" {
+        anyhow::bail!("❌ Gemini API密钥未配置，请运行: --setup-feedback");
     }
 
-    // 写入文件
-    std::fs::write(config_path, updated_lines.join("\n"))?;
+    if ai_config.telegram_bot_token.is_empty() || ai_config.telegram_bot_token == "YOUR_TELEGRAM_BOT_TOKEN" {
+        anyhow::bail!("❌ Telegram Bot Token未配置，请运行: --setup-feedback");
+    }
 
-    Ok(())
+    Ok(ai_config)
 }
 
 /// 解析配置文件行
@@ -1106,18 +797,18 @@ fn parse_config_line(line: &str) -> Option<(String, String)> {
 
     if let Some(eq_pos) = line.find('=') {
         let key = line[..eq_pos].trim();
-        let mut value = line[eq_pos + 1..].trim();
+        let value = line[eq_pos + 1..].trim();
 
-        // 先处理行尾注释
-        if let Some(comment_pos) = value.find('#') {
-            value = value[..comment_pos].trim();
-        }
-
-        // 再移除引号
-        let clean_value = if value.starts_with('"') && value.ends_with('"') && value.len() > 1 {
+        // 移除引号和注释
+        let clean_value = if value.starts_with('"') && value.ends_with('"') {
             value[1..value.len()-1].to_string()
         } else {
-            value.to_string()
+            // 处理行尾注释
+            if let Some(comment_pos) = value.find('#') {
+                value[..comment_pos].trim().to_string()
+            } else {
+                value.to_string()
+            }
         };
 
         return Some((key.to_string(), clean_value));

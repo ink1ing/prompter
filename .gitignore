@@ -1,0 +1,44 @@
+# 编译输出
+/target/
+*.rs.bk
+*.pdb
+
+# 用户配置（包含敏感API密钥）
+config.toml
+
+# 数据文件
+/data/
+*.md
+!README.md
+!LICENSE.md
+
+# 日志文件
+*.log
+prompter.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# 临时文件
+*.tmp
+*.bak
+
+# 环境变量
+.env
+.env.local
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Rust
+Cargo.lock

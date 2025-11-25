@@ -1,0 +1,72 @@
+# Prompter配置文件示例
+# 复制此文件为 config.toml 并填入您的配置
+# 或运行 ./start.sh 选择"一键配置系统"自动生成
+
+[app]
+auto_upload_enabled = false  # 是否启用自动上传
+upload_interval_hours = 1    # 上传间隔（小时）
+
+[filter]
+detect_chinese = true        # 检测中文提示词
+min_chinese_chars = 3        # 最少中文字符数
+
+[cloudflare]
+account_id = ""              # Cloudflare账户ID（可选）
+api_token = ""               # Cloudflare API Token（可选）
+pages_project_name = ""      # Pages项目名称（可选）
+kv_namespace_id = ""         # KV命名空间ID（可选）
+
+[website]
+domain = ""                  # 网站域名（可选）
+github_token = ""            # GitHub Token（可选）
+github_repo = ""             # GitHub仓库（可选）
+
+[logging]
+level = "info"               # 日志级别
+file = "prompter.log"        # 日志文件
+max_size_mb = 50             # 最大日志文件大小
+
+# ===================================
+# AI反馈系统配置
+# ===================================
+[ai_feedback]
+enabled = false                    # 系统启用状态
+gemini_api_key = ""                # 请通过 --setup-feedback 配置
+telegram_bot_token = ""            # 请通过 --setup-feedback 配置
+telegram_chat_id = ""              # 自动获取
+daily_report_time = "09:00"        # 每日推送时间（24小时制）
+max_prompts_per_analysis = 50      # 单次分析最大提示词数量
+
+# Gemini模型配置
+thinking_model = "models/gemini-2.0-flash-thinking-exp"    # 思考模型（更智能但可能有配额限制）
+fast_model = "models/gemini-2.5-flash"                     # 快速模型（作为降级备选）
+thinking_budget = 1024                                     # 思考预算（-1=动态，0=关闭，>0=固定预算）
+auto_fallback = true                                       # 当思考模型配额不足时自动切换到快速模型
+max_retries = 3                                            # 最大重试次数
+
+# ===================================
+# 思考预算说明
+# ===================================
+# thinking_budget 参数控制AI的"思考深度"：
+#
+# -1 (动态思考，推荐):
+#    AI自动根据提示词复杂度调整思考深度
+#    适合：希望获得最佳分析质量
+#
+# 0 (关闭思考):
+#    仅使用快速模型，不进行深度思考
+#    适合：节省API配额，快速分析
+#
+# 1-32768 (固定预算):
+#    指定固定的思考Token数量
+#    推荐值：512（轻度）、1024（中度）、2048（深度）
+#    适合：希望精确控制API使用量
+#
+# ===================================
+# 自动降级工作流程
+# ===================================
+# 1. 优先尝试思考模型进行深度分析
+# 2. 检测API配额限制错误（429状态码）
+# 3. 使用指数退避算法进行智能重试
+# 4. 如仍失败则自动降级到快速模型
+# 5. 确保分析任务无论如何都能完成

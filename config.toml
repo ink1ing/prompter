@@ -34,3 +34,19 @@ max_backups = 10
 level = "info"
 file = "prompter.log"
 max_size_mb = 50
+
+# AI反馈系统配置
+[ai_feedback]
+enabled = false                    # 系统启用状态
+gemini_api_key = "AIzaSyBSR8Q-X5s3L_XH-WrWenwV6BybGHo47Jw"                # Gemini API密钥
+telegram_bot_token = "8120640865:AAEbb9OpJ2LbH6jktChbbnu11KuIB-XdD6o"            # Telegram Bot Token
+telegram_chat_id = ""              # Chat ID
+daily_report_time = "09:00"        # 每日推送时间
+max_prompts_per_analysis = 50      # 单次分析最大提示词数量
+
+# Gemini模型配置
+thinking_model = "models/gemini-2.0-flash-thinking-exp"    # 思考模型（更智能但可能有配额限制）
+fast_model = "models/gemini-2.5-flash"                     # 快速模型（作为降级备选）
+thinking_budget = 1024                                     # 思考预算（-1=动态，0=关闭，>0=固定预算）
+auto_fallback = true                                       # 当思考模型配额不足时自动切换到快速模型
+max_retries = 3                                            # 最大重试次数
