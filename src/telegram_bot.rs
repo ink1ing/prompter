@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use crate::feedback_interval::FeedbackInterval;
+use crate::gemini_analyzer::{GeminiAnalyzer, GeminiConfig};
 
 #[derive(Debug, Clone)]
 pub struct TelegramConfig {
@@ -312,6 +313,23 @@ impl TelegramBot {
         }
     }
 
+    /// 安全截取字符串，避免UTF-8字符边界问题
+    fn safe_truncate(s: &str, max_chars: usize) -> &str {
+        // 使用字符迭代器安全截取，避免字节边界问题
+        let mut end_byte_idx = s.len();
+        let mut char_count = 0;
+
+        for (byte_idx, _char) in s.char_indices() {
+            if char_count >= max_chars {
+                end_byte_idx = byte_idx;
+                break;
+            }
+            char_count += 1;
+        }
+
+        &s[..end_byte_idx]
+    }
+
     /// 获取Bot信息
     pub async fn get_bot_info(&self) -> Result<String> {
         let url = format!("{}/bot{}/getMe",
@@ -587,15 +605,37 @@ impl TelegramBot {
 
     /// 处理报告生成命令
     async fn handle_report_command(&self) -> Result<String> {
-        // 读取所有历史提示词
-        let data_file = std::path::Path::new("./data/prompts.md");
+        // 读取真实的历史提示词数据，优先使用历史监控数据
+        let data_files = vec![
+            "./data/claude_history_prompts.md",
+            "./data/claude_session_prompts.md",
+            "./data/shell_captured_prompts.md",
+            "./data/prompts.md"
+        ];
 
-        if !data_file.exists() {
-            return Ok("📭 <b>暂无数据</b>\n\n还没有收集到提示词，请继续使用Claude Code～".to_string());
+        let mut content = String::new();
+        let mut data_source = String::new();
+
+        // 找到第一个存在且有内容的数据文件
+        for file_path in data_files {
+            let data_file = std::path::Path::new(file_path);
+            if data_file.exists() {
+                match tokio::fs::read_to_string(data_file).await {
+                    Ok(file_content) => {
+                        if !file_content.trim().is_empty() {
+                            content = file_content;
+                            data_source = file_path.to_string();
+                            break;
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
         }
 
-        let content = tokio::fs::read_to_string(data_file).await
-            .map_err(|e| anyhow!("读取文件失败: {}", e))?;
+        if content.is_empty() {
+            return Ok("📭 <b>暂无数据</b>\n\n还没有收集到提示词，请先启动监控模式:\n• 历史监控: <code>--history-monitor</code>\n• 会话监控: <code>--session-monitor</code>\n• Shell监控: <code>--shell-monitor</code>".to_string());
+        }
 
         // 统计信息
         let lines: Vec<&str> = content.lines().collect();
@@ -605,40 +645,176 @@ impl TelegramBot {
             return Ok("📭 <b>暂无数据</b>\n\n数据文件存在但为空～".to_string());
         }
 
-        // 提取所有提示词
+        // 根据数据源格式提取提示词
         let mut prompts = Vec::new();
         let mut current_prompt = String::new();
-        let mut in_prompt = false;
+        let mut in_code_block = false;
 
         for line in lines {
+            // 检测时间戳行，表示新的提示词条目开始
             if line.starts_with("## 20") {
-                if !current_prompt.is_empty() {
-                    prompts.push(current_prompt.clone());
+                // 保存上一个提示词
+                if !current_prompt.trim().is_empty() {
+                    prompts.push(current_prompt.trim().to_string());
                     current_prompt.clear();
                 }
-                in_prompt = true;
-            } else if line == "---" {
-                in_prompt = false;
-            } else if in_prompt && !line.is_empty() {
-                current_prompt.push_str(line);
-                current_prompt.push(' ');
+                in_code_block = false;
+                continue;
+            }
+
+            // 检测代码块标记
+            if line.trim() == "```" {
+                in_code_block = !in_code_block;
+                continue;
+            }
+
+            // 如果在代码块中，这就是提示词内容
+            if in_code_block && !line.trim().is_empty() {
+                if !current_prompt.is_empty() {
+                    current_prompt.push(' ');
+                }
+                current_prompt.push_str(line.trim());
+                continue;
+            }
+
+            // 对于非代码块格式的数据，检测其他格式
+            if !in_code_block && !line.trim().is_empty()
+                && !line.starts_with("**")  // 排除项目信息
+                && !line.contains("会话ID")
+                && !line.contains("项目:")
+                && line != "---" {
+                if !current_prompt.is_empty() {
+                    current_prompt.push(' ');
+                }
+                current_prompt.push_str(line.trim());
             }
         }
-        if !current_prompt.is_empty() {
-            prompts.push(current_prompt);
+
+        // 添加最后一个提示词
+        if !current_prompt.trim().is_empty() {
+            prompts.push(current_prompt.trim().to_string());
         }
 
-        // 计算平均长度
-        let total_chars: usize = prompts.iter().map(|p| p.len()).sum();
-        let avg_length = if !prompts.is_empty() {
-            total_chars / prompts.len()
-        } else {
-            0
+        if prompts.is_empty() {
+            return Ok("📭 <b>暂无有效提示词</b>\n\n找到了数据文件但没有提取到有效的提示词内容。".to_string());
+        }
+
+        // 发送"正在分析"状态消息
+        self.send_message(&format!(
+            "🤖 <b>正在分析您的 {} 条提示词...</b>\n\n💭 使用Gemini思考模型深度分析中，请稍候～",
+            prompts.len()
+        )).await?;
+
+        // 生成基础统计报告
+        let stats_report = self.generate_stats_report(&prompts, &data_source).await?;
+
+        // 尝试生成AI分析报告
+        match self.generate_ai_analysis_report(&prompts).await {
+            Ok(ai_analysis) => {
+                Ok(format!("{}\n\n📋 <b>AI深度分析</b>\n{}", stats_report, ai_analysis))
+            }
+            Err(e) => {
+                Ok(format!("{}\n\n⚠️ <b>AI分析暂时不可用:</b> {}\n\n💡 请检查Gemini API配置", stats_report, e))
+            }
+        }
+    }
+
+    /// 生成AI分析报告
+    async fn generate_ai_analysis_report(&self, prompts: &[String]) -> Result<String> {
+        // 从配置文件读取Gemini配置
+        let config_content = std::fs::read_to_string("config.toml")
+            .map_err(|_| anyhow!("无法读取配置文件"))?;
+
+        let mut gemini_config = GeminiConfig::default();
+
+        // 解析配置
+        for line in config_content.lines() {
+            if let Some((key, value)) = self.parse_config_line(line) {
+                match key.as_str() {
+                    "gemini_api_key" => gemini_config.api_key = value,
+                    "thinking_model" => gemini_config.thinking_model = value,
+                    "fast_model" => gemini_config.fast_model = value,
+                    "thinking_budget" => {
+                        if let Ok(budget) = value.parse::<i32>() {
+                            gemini_config.thinking_budget = budget;
+                        }
+                    }
+                    "auto_fallback" => gemini_config.auto_fallback = value == "true",
+                    "max_retries" => {
+                        if let Ok(retries) = value.parse::<usize>() {
+                            gemini_config.max_retries = retries;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if gemini_config.api_key.is_empty() {
+            return Err(anyhow!("Gemini API密钥未配置"));
+        }
+
+        // 创建Gemini分析器
+        let analyzer = match GeminiAnalyzer::new(gemini_config) {
+            Ok(analyzer) => analyzer,
+            Err(e) => return Err(anyhow!("创建Gemini分析器失败: {}", e)),
         };
+
+        // 分析前5个最新的提示词（避免API配额过度消耗）
+        let recent_prompts: Vec<String> = prompts.iter().rev().take(5).cloned().collect();
+
+        // 使用Gemini生成整体分析
+        match analyzer.generate_overall_review(&recent_prompts).await {
+            Ok(analysis) => Ok(analysis),
+            Err(e) => Err(anyhow!("AI分析失败: {}", e))
+        }
+    }
+
+    /// 解析配置文件行
+    fn parse_config_line(&self, line: &str) -> Option<(String, String)> {
+        if line.starts_with('#') || line.is_empty() || line.starts_with('[') {
+            return None;
+        }
+
+        if let Some(eq_pos) = line.find('=') {
+            let key = line[..eq_pos].trim();
+            let value = line[eq_pos + 1..].trim();
+
+            // 移除引号和注释
+            let clean_value = if value.starts_with('\"') && value.contains('\"') {
+                if let Some(end_quote) = value[1..].find('\"') {
+                    value[1..end_quote + 1].to_string()
+                } else {
+                    value.to_string()
+                }
+            } else {
+                // 处理行尾注释
+                if let Some(comment_pos) = value.find('#') {
+                    value[..comment_pos].trim().to_string()
+                } else {
+                    value.to_string()
+                }
+            };
+
+            return Some((key.to_string(), clean_value));
+        }
+
+        None
+    }
+
+    /// 生成统计报告
+    async fn generate_stats_report(&self, prompts: &[String], data_source: &str) -> Result<String> {
+        let total_prompts = prompts.len();
+        let total_chars: usize = prompts.iter().map(|p| p.len()).sum();
+        let avg_length = if total_prompts > 0 { total_chars / total_prompts } else { 0 };
 
         // 找最长和最短的提示词
         let longest = prompts.iter().max_by_key(|p| p.len())
-            .map(|p| if p.len() > 100 { format!("{}...", &p[..100]) } else { p.clone() })
+            .map(|p| if p.len() > 100 {
+                format!("{}...", Self::safe_truncate(p, 100))
+            } else {
+                p.clone()
+            })
             .unwrap_or_default();
 
         let shortest = prompts.iter().min_by_key(|p| p.len())
@@ -648,8 +824,9 @@ impl TelegramBot {
         // 最近5个提示词
         let recent: Vec<String> = prompts.iter().rev().take(5)
             .map(|p| {
+                let safe_truncated = Self::safe_truncate(p, 50);
                 if p.len() > 50 {
-                    format!("• {}...", &p[..50])
+                    format!("• {}...", safe_truncated)
                 } else {
                     format!("• {}", p)
                 }
@@ -662,18 +839,17 @@ impl TelegramBot {
             📈 <b>统计概览</b>\n\
             总提示词数: {} 条\n\
             平均长度: {} 字符\n\
-            数据文件: ./data/prompts.md\n\
+            数据来源: {}\n\
             \n\
             📏 <b>长度分析</b>\n\
             最长提示词: {}\n\
             最短提示词: {}\n\
             \n\
             🔄 <b>最近提示词</b> (最新5条)\n\
-            {}\n\
-            \n\
-            💡 <i>提示: 使用 /based-on-number 设置自动分析频率</i>",
+            {}",
             total_prompts,
             avg_length,
+            data_source,
             longest,
             shortest,
             recent.join("\n")
@@ -741,7 +917,7 @@ impl TelegramBot {
         match Self::save_system_prompt_to_config(new_prompt).await {
             Ok(()) => {
                 let preview = if new_prompt.len() > 100 {
-                    format!("{}...", &new_prompt[..100])
+                    format!("{}...", Self::safe_truncate(new_prompt, 100))
                 } else {
                     new_prompt.to_string()
                 };

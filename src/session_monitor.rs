@@ -62,6 +62,9 @@ impl SessionMonitor {
 
             // 检查Claude Code配置和历史文件
             self.check_claude_session_files().await?;
+
+            // 监控Claude Code的实际日志和缓存文件
+            self.monitor_claude_system_files().await?;
         }
     }
 
@@ -74,9 +77,13 @@ impl SessionMonitor {
 
         let ps_output = String::from_utf8_lossy(&output.stdout);
         let mut new_sessions = HashMap::new();
+        let mut found_count = 0;
 
         for line in ps_output.lines() {
             if self.session_regex.is_match(line) && !line.contains("grep") {
+                found_count += 1;
+                println!("🔍 [DEBUG] 发现Claude进程 #{}: {}", found_count, line);
+
                 if let Some(session) = self.parse_ps_line(line).await? {
                     // 检查是否是新会话
                     if !self.active_sessions.contains_key(&session.pid) {
@@ -92,6 +99,10 @@ impl SessionMonitor {
                 }
             }
         }
+
+        // 显示扫描结果统计
+        println!("📊 [DEBUG] 进程扫描结果: 找到 {} 个Claude进程，活跃会话 {} 个",
+            found_count, new_sessions.len());
 
         // 检测结束的会话
         let ended_sessions: Vec<u32> = self.active_sessions.keys()
@@ -253,19 +264,28 @@ impl SessionMonitor {
         // 寻找用户输入的中文提示词
         let lines: Vec<&str> = content.lines().collect();
 
-        for (_i, line) in lines.iter().enumerate() {
-            // 检测可能的用户输入行
-            if self.is_user_input_line(line) {
-                if let Some(chinese_content) = self.chinese_filter.filter_prompt(line) {
-                    // 检查是否已经处理过这个内容（简化处理）
-                    let _content_hash = format!("{}:{}", pid, chinese_content);
+        for (i, line) in lines.iter().enumerate() {
+            // 增加调试输出
+            if self.chinese_filter.contains_chinese(line) {
+                println!("🔍 [DEBUG] 发现中文行 #{}: {}", i, line.chars().take(50).collect::<String>());
 
-                    println!("🎯 捕获Claude Code会话中文输入 (PID: {}): {}",
-                        pid,
-                        chinese_content.chars().take(50).collect::<String>()
-                    );
+                // 检测可能的用户输入行
+                if self.is_user_input_line(line) {
+                    if let Some(chinese_content) = self.chinese_filter.filter_prompt(line) {
+                        // 检查是否已经处理过这个内容（简化处理）
+                        let _content_hash = format!("{}:{}", pid, chinese_content);
 
-                    self.save_session_prompt(pid, &chinese_content).await?;
+                        println!("🎯 捕获Claude Code会话中文输入 (PID: {}): {}",
+                            pid,
+                            chinese_content.chars().take(50).collect::<String>()
+                        );
+
+                        self.save_session_prompt(pid, &chinese_content).await?;
+                    } else {
+                        println!("🔍 [DEBUG] 中文行被过滤器排除: {}", line.chars().take(30).collect::<String>());
+                    }
+                } else {
+                    println!("🔍 [DEBUG] 中文行不符合用户输入模式: {}", line.chars().take(30).collect::<String>());
                 }
             }
         }
@@ -275,28 +295,54 @@ impl SessionMonitor {
 
     /// 判断是否是用户输入行
     fn is_user_input_line(&self, line: &str) -> bool {
-        // 检测常见的用户输入模式
-        let user_patterns = vec![
-            r"^>\s*",           // > 提示符
-            r"^\$\s*",          // $ 提示符
-            r"^.*>\s*",         // 其他提示符
-            r"^User:\s*",       // User: 标记
-            r"^你:\s*",         // 中文用户标记
+        let trimmed = line.trim();
+
+        // 过滤掉太短或空白行
+        if trimmed.len() < 2 {
+            return false;
+        }
+
+        // 过滤系统输出和Claude响应
+        let system_indicators = [
+            "Claude:", "Assistant:", "🤖", "✅", "❌", "⚠️", "💡",
+            "[INFO]", "[DEBUG]", "[ERROR]", "[WARN]",
+            "Loading", "Saving", "Found", "Error:",
+            "usage:", "Usage:", "Options:",
+            "http://", "https://", "ftp://",
+            "exit", "quit", "/help", "/quit",
         ];
 
-        for pattern in user_patterns {
-            if let Ok(regex) = Regex::new(pattern) {
-                if regex.is_match(line) {
-                    return true;
+        for indicator in &system_indicators {
+            if trimmed.contains(indicator) {
+                return false;
+            }
+        }
+
+        // Claude Code特定的输出模式
+        let claude_output_patterns = [
+            r"^\[.*\].*$",              // 时间戳格式输出
+            r"^➤.*$",                   // Claude Code 提示符
+            r"^›.*$",                   // Claude Code 箭头提示
+            r"^.*\d{4}-\d{2}-\d{2}.*$", // 日期格式
+            r"^.*\(\d+.*bytes?\).*$",   // 文件大小信息
+        ];
+
+        for pattern_str in &claude_output_patterns {
+            if let Ok(regex) = Regex::new(pattern_str) {
+                if regex.is_match(trimmed) {
+                    return false;
                 }
             }
         }
 
-        // 检查是否包含中文且不是系统输出
-        self.chinese_filter.contains_chinese(line) &&
-        !line.contains("Claude:") &&
-        !line.contains("Assistant:") &&
-        !line.contains("🤖")
+        // 检查是否包含中文且长度合理
+        if self.chinese_filter.contains_chinese(trimmed) {
+            // 更严格的中文检测：确保有足够的中文内容
+            let chinese_count = self.chinese_filter.count_chinese_chars(trimmed);
+            return chinese_count >= 2 && trimmed.len() >= 5;
+        }
+
+        false
     }
 
     /// 监控Claude Code配置文件
@@ -395,6 +441,81 @@ impl SessionMonitor {
         println!("⏰ 启动时间: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
         println!("🔧 扫描间隔: 3秒");
         println!("{}", "-".repeat(60));
+    }
+
+    /// 监控Claude Code的实际日志和缓存文件
+    async fn monitor_claude_system_files(&mut self) -> Result<()> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+
+        // Claude Code常见的系统文件位置
+        let system_file_paths = vec![
+            // Claude Code配置和日志目录
+            format!("{}/.claude/logs", home),
+            format!("{}/.claude/cache", home),
+            format!("{}/.claude/history.jsonl", home),
+            format!("{}/.claude/sessions", home),
+
+            // 可能的临时文件
+            "/tmp/claude-input.txt".to_string(),
+            "/tmp/claude-session.txt".to_string(),
+
+            // 应用特定缓存
+            format!("{}/.config/claude", home),
+            format!("{}/Library/Caches/claude", home),
+            format!("{}/Library/Application Support/claude", home),
+
+            // 当前工作目录中可能的Claude文件
+            ".claude".to_string(),
+            "claude.log".to_string(),
+            "claude-session.log".to_string(),
+        ];
+
+        for path_str in system_file_paths {
+            let path = Path::new(&path_str);
+
+            // 检查是否为目录
+            if path.is_dir() {
+                // 扫描目录中的文件
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        if let Ok(file_type) = entry.file_type() {
+                            if file_type.is_file() {
+                                self.check_file_for_recent_changes(&entry.path()).await?;
+                            }
+                        }
+                    }
+                }
+            } else if path.is_file() {
+                // 直接检查文件
+                self.check_file_for_recent_changes(path).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 检查文件是否有最近更改
+    async fn check_file_for_recent_changes(&mut self, file_path: &Path) -> Result<()> {
+        if let Ok(metadata) = std::fs::metadata(file_path) {
+            if let Ok(modified) = metadata.modified() {
+                // 只检查最近10秒内修改的文件
+                let ten_seconds_ago = SystemTime::now()
+                    .checked_sub(Duration::from_secs(10))
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+
+                if modified > ten_seconds_ago {
+                    // 读取文件内容并分析
+                    if let Ok(content) = tokio::fs::read_to_string(file_path).await {
+                        // 只分析文本文件，跳过二进制文件
+                        if content.is_ascii() || content.chars().all(|c| !c.is_control() || c.is_whitespace()) {
+                            println!("📄 检测到文件更新: {}", file_path.display());
+                            self.analyze_captured_content(&content, 0).await?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 获取会话统计信息
