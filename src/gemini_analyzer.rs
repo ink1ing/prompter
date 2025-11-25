@@ -335,6 +335,122 @@ impl GeminiAnalyzer {
         })
     }
 
+    /// 生成总体点评报告(用于启动时分析历史提示词)
+    pub async fn generate_overall_review(&self, prompts: &[String]) -> Result<String> {
+        if prompts.is_empty() {
+            return Ok("📭 暂无历史提示词数据".to_string());
+        }
+
+        println!("📊 正在分析 {} 条历史提示词...", prompts.len());
+
+        // 将所有提示词合并成一个分析请求
+        let combined_prompt = format!(
+            "请对以下 {} 条Claude Code用户历史提示词进行总体分析和点评：
+
+{}
+
+请从以下角度提供总体分析：
+1. **整体质量评价**: 这些提示词的总体质量如何(优秀/良好/一般)
+2. **常见优点**: 这些提示词中体现出的优秀实践(如果有)
+3. **常见问题**: 这些提示词中普遍存在的问题(如果有)
+4. **改进方向**: 3-5条具体的、可操作的整体改进建议
+5. **使用习惯分析**: 从提示词看出用户的使用习惯和偏好
+
+请用中文回复,格式清晰,重点突出。总字数控制在500-800字之间。",
+            prompts.len(),
+            prompts.iter()
+                .enumerate()
+                .map(|(i, p)| format!("{}. {}", i + 1, p))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        );
+
+        // 优先使用思考模型进行深度分析
+        let review = match self.try_thinking_model(&combined_prompt).await {
+            Ok(analysis) => {
+                println!("✅ 总体点评分析完成(思考模型)");
+                analysis.gemini_feedback
+            }
+            Err(e) => {
+                println!("⚠️ 思考模型失败: {}", e);
+                if self.config.auto_fallback {
+                    println!("🔄 切换到快速模型...");
+                    match self.try_fast_model(&combined_prompt).await {
+                        Ok(analysis) => {
+                            println!("✅ 总体点评分析完成(快速模型)");
+                            analysis.gemini_feedback
+                        }
+                        Err(e2) => {
+                            return Err(anyhow!("总体分析失败: {}", e2));
+                        }
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+
+        Ok(review)
+    }
+
+    /// 从本地文件读取历史提示词(运行软件前的历史数据)
+    pub async fn read_historical_prompts(&self, file_path: &Path) -> Result<Vec<String>> {
+        if !file_path.exists() {
+            println!("📝 历史提示词文件不存在: {}", file_path.display());
+            return Ok(Vec::new());
+        }
+
+        let content = tokio::fs::read_to_string(file_path).await
+            .map_err(|e| anyhow!("读取历史文件失败: {}", e))?;
+
+        // 从Markdown格式提取提示词
+        let mut prompts = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            // 查找时间戳行 (## 2024-11-24 21:30:15)
+            if line.starts_with("##") && line.contains("20") {
+                // 跳过空行
+                i += 1;
+                while i < lines.len() && lines[i].trim().is_empty() {
+                    i += 1;
+                }
+
+                // 收集提示词内容(直到遇到分隔线或下一个时间戳)
+                let mut prompt_content = String::new();
+                while i < lines.len() {
+                    let content_line = lines[i].trim();
+
+                    if content_line == "---" || content_line.starts_with("##") {
+                        break;
+                    }
+
+                    if !content_line.is_empty() {
+                        if !prompt_content.is_empty() {
+                            prompt_content.push(' ');
+                        }
+                        prompt_content.push_str(content_line);
+                    }
+
+                    i += 1;
+                }
+
+                // 添加非空的提示词
+                if !prompt_content.is_empty() && prompt_content.len() >= 10 {
+                    prompts.push(prompt_content);
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        println!("📖 读取到 {} 条历史提示词", prompts.len());
+        Ok(prompts)
+    }
+
     /// 生成分析报告
     pub fn generate_report(&self, analyses: &[PromptAnalysis]) -> String {
         if analyses.is_empty() {

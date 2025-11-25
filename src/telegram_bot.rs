@@ -125,9 +125,9 @@ impl TelegramBot {
                 } else {
                     format!("📊 AI提示词分析报告 (第{}/{}部分 - 续)\n\n", i + 1, chunks.len())
                 };
-                self.send_message(&chat_id, &format!("{}{}", header, chunk)).await?;
+                self.send_message_to_chat(&chat_id, &format!("{}{}", header, chunk)).await?;
             } else {
-                self.send_message(&chat_id, chunk).await?;
+                self.send_message_to_chat(&chat_id, chunk).await?;
             }
 
             // 避免消息发送过于频繁
@@ -140,8 +140,24 @@ impl TelegramBot {
         Ok(())
     }
 
-    /// 发送单条消息
-    async fn send_message(&self, chat_id: &str, text: &str) -> Result<()> {
+    /// 公开方法:发送消息到配置的chat
+    pub async fn send_message(&self, text: &str) -> Result<()> {
+        let chat_id = if self.config.chat_id.is_empty() {
+            match self.get_chat_id().await {
+                Ok(id) => id,
+                Err(_) => {
+                    return Err(anyhow!("无法获取Chat ID，请先在Telegram向机器人发送 /start 命令"));
+                }
+            }
+        } else {
+            self.config.chat_id.clone()
+        };
+
+        self.send_message_to_chat(&chat_id, text).await
+    }
+
+    /// 私有方法:发送单条消息到指定chat
+    async fn send_message_to_chat(&self, chat_id: &str, text: &str) -> Result<()> {
         let message = TelegramSendMessage {
             chat_id: chat_id.to_string(),
             text: text.to_string(),
@@ -266,7 +282,7 @@ impl TelegramBot {
             self.config.chat_id.clone()
         };
 
-        self.send_message(&chat_id, &test_message).await?;
+        self.send_message_to_chat(&chat_id, &test_message).await?;
         println!("✅ 测试消息发送成功！");
         Ok(())
     }
@@ -338,7 +354,7 @@ impl TelegramBot {
             self.config.chat_id.clone()
         };
 
-        self.send_message(&chat_id, &message).await?;
+        self.send_message_to_chat(&chat_id, &message).await?;
         Ok(())
     }
 
@@ -362,7 +378,7 @@ impl TelegramBot {
         };
 
         // 错误通知不应该因为发送失败而中断程序
-        if let Err(e) = self.send_message(&chat_id, &message).await {
+        if let Err(e) = self.send_message_to_chat(&chat_id, &message).await {
             eprintln!("⚠️ 发送错误通知失败: {}", e);
         }
 
@@ -465,7 +481,7 @@ impl TelegramBot {
         println!("📨 收到消息: {}", text);
 
         let response = self.process_command(text).await?;
-        self.send_message(&chat_id, &response).await?;
+        self.send_message_to_chat(&chat_id, &response).await?;
 
         Ok(())
     }

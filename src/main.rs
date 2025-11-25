@@ -772,6 +772,67 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
         println!("⚠️ 发送启动通知失败: {}", e);
     }
 
+    // ✨ 新功能: 读取并分析历史提示词
+    println!("📖 检查历史提示词...");
+    let data_file = std::path::Path::new("./data/prompts.md");
+
+    let gemini_config = gemini_analyzer::GeminiConfig {
+        api_key: ai_config.gemini_api_key.clone(),
+        thinking_model: ai_config.thinking_model.clone(),
+        fast_model: ai_config.fast_model.clone(),
+        thinking_budget: ai_config.thinking_budget,
+        auto_fallback: ai_config.auto_fallback,
+        max_retries: ai_config.max_retries,
+        ..Default::default()
+    };
+
+    let analyzer = gemini_analyzer::GeminiAnalyzer::new(gemini_config)?;
+
+    match analyzer.read_historical_prompts(data_file).await {
+        Ok(historical_prompts) if !historical_prompts.is_empty() => {
+            println!("📊 发现 {} 条历史提示词", historical_prompts.len());
+            println!("🤖 正在生成总体点评...\n");
+
+            match analyzer.generate_overall_review(&historical_prompts).await {
+                Ok(review) => {
+                    // 格式化报告并发送到Telegram
+                    let report = format!(
+                        "📊 <b>历史提示词总体点评</b>\n\
+                        \n\
+                        📈 统计: {} 条提示词\n\
+                        ⏰ 生成时间: {}\n\
+                        \n\
+                        {}\
+                        \n\
+                        <i>--- Powered by Gemini AI ---</i>",
+                        historical_prompts.len(),
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        review.replace("**", "<b>").replace("**", "</b>")
+                            .replace("*", "")  // 移除单星号
+                    );
+
+                    println!("✅ 总体点评生成完成");
+                    println!("📱 发送到Telegram...");
+
+                    if let Err(e) = bot.send_message(&report).await {
+                        println!("⚠️ 发送失败: {}", e);
+                    } else {
+                        println!("✅ 总体点评已发送到Telegram\n");
+                    }
+                }
+                Err(e) => {
+                    println!("⚠️ 生成总体点评失败: {}\n", e);
+                }
+            }
+        }
+        Ok(_) => {
+            println!("📝 暂无历史提示词数据\n");
+        }
+        Err(e) => {
+            println!("⚠️ 读取历史提示词失败: {}\n", e);
+        }
+    }
+
     // 并发运行两个任务:
     // 1. Telegram命令监听
     // 2. Claude历史监控(实时显示200状态)
