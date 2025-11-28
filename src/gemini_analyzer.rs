@@ -369,14 +369,9 @@ impl GeminiAnalyzer {
             }
         }
 
-        // 去重并限制数量（避免内容过多）
+        // 去重（保留所有历史数据，不再限制数量）
         prompts.sort();
         prompts.dedup();
-
-        // 只取最近的50条（避免分析时间过长和API配额问题）
-        if prompts.len() > 50 {
-            prompts = prompts.into_iter().rev().take(50).collect();
-        }
 
         println!("📖 从Claude历史中提取到 {} 条中文提示词", prompts.len());
         Ok(prompts)
