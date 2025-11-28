@@ -14,6 +14,10 @@ use cloudflare_uploader::CloudflareConfig;
 use auto_scheduler::{AutoScheduler, AutoConfig};
 use shell_monitor::{ShellMonitor, ShellMonitorConfig};
 
+// 导入新的模块
+mod api_key_manager;
+use api_key_manager::{ApiKeyManager, ApiKeyConfig};
+
 #[derive(Debug, Deserialize)]
 struct Config {
     app: AppConfig,
@@ -66,10 +70,14 @@ mod auto_scheduler;
 mod shell_monitor;
 mod session_monitor;
 mod claude_history_monitor;
+mod claude_jsonl_monitor;
 mod ai_feedback_config;
 mod gemini_analyzer;
+mod perplexity_analyzer;
+mod llm_selector;
 mod telegram_bot;
 mod feedback_interval;
+mod global_process_monitor;
 
 #[derive(Parser)]
 #[command(name = "prompter")]
@@ -115,6 +123,10 @@ struct Args {
     #[arg(long)]
     history_monitor: bool,
 
+    /// Enable Claude Code JSONL monitoring mode (monitor ~/.claude/projects/*.jsonl)
+    #[arg(long)]
+    jsonl_monitor: bool,
+
     /// Enable AI feedback system with automatic analysis and Telegram notifications
     #[arg(long)]
     auto_feedback: bool,
@@ -130,6 +142,10 @@ struct Args {
     /// Start Telegram bot command listener
     #[arg(long)]
     telegram_listen: bool,
+
+    /// Enable global process monitoring mode (monitor all terminal Claude processes)
+    #[arg(long)]
+    global_monitor: bool,
 
     /// Show AI feedback system help and usage examples
     #[arg(long)]
@@ -276,6 +292,9 @@ async fn main() -> Result<()> {
     } else if args.session_monitor {
         // Claude Code会话监控模式
         run_session_monitor_mode(&args).await?;
+    } else if args.jsonl_monitor {
+        // Claude Code JSONL监控模式
+        run_jsonl_monitor_mode(&args).await?;
     } else if args.history_monitor {
         // Claude Code历史监控模式
         run_history_monitor_mode(&args).await?;
@@ -288,6 +307,9 @@ async fn main() -> Result<()> {
     } else if args.telegram_listen {
         // 启动Telegram命令监听器
         run_telegram_listener(&args).await?;
+    } else if args.global_monitor {
+        // 启动全局进程监控模式
+        run_global_process_monitor(&args).await?;
     } else if args.help_feedback {
         // 显示AI反馈系统帮助
         show_ai_feedback_help();
@@ -519,6 +541,42 @@ async fn run_session_monitor_mode(args: &Args) -> Result<()> {
     Ok(())
 }
 
+/// Claude Code JSONL监控模式 - 监控~/.claude/projects/*.jsonl
+async fn run_jsonl_monitor_mode(args: &Args) -> Result<()> {
+    println!("📋 启动Claude Code JSONL监控模式...");
+
+    // 加载配置
+    let config = load_config(&args.config)?;
+
+    // 创建中文过滤器
+    let chinese_filter = ChineseFilter::new(
+        config.filter.min_chinese_chars,
+        &config.filter.exclude_commands,
+    )?;
+
+    // 创建JSONL监控器
+    let mut jsonl_monitor = claude_jsonl_monitor::ClaudeJsonlMonitor::new(chinese_filter)?;
+
+    println!("📝 JSONL监控已启动，正在监控Claude Code项目交互:");
+    println!("  - ~/.claude/projects/*.jsonl 实时监控");
+    println!("  - JSON消息解析和提取");
+    println!("  - 用户输入中文提示词捕获");
+    println!("📁 中文提示词将保存到: ./data/claude_session_prompts.md");
+    println!();
+    println!("🔧 如需结合自动上传功能，请使用: --auto --jsonl-monitor");
+    println!("⏹️  按 Ctrl+C 停止监控");
+    println!();
+
+    // 启动JSONL监控
+    jsonl_monitor.start_jsonl_monitoring().await?;
+
+    // 等待中断信号
+    tokio::signal::ctrl_c().await?;
+    println!("⏹️  JSONL监控服务已停止");
+
+    Ok(())
+}
+
 /// Claude Code历史监控模式 - 监控~/.claude/history.jsonl
 async fn run_history_monitor_mode(args: &Args) -> Result<()> {
     println!("📚 启动Claude Code历史监控模式...");
@@ -596,10 +654,7 @@ async fn run_test_feedback(args: &Args) -> Result<()> {
     println!("\n🤖 测试Gemini API连接...");
     let gemini_config = gemini_analyzer::GeminiConfig {
         api_key: ai_config.gemini_api_key.clone(),
-        thinking_model: ai_config.thinking_model.clone(),
         fast_model: ai_config.fast_model.clone(),
-        thinking_budget: ai_config.thinking_budget,
-        auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
         system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
@@ -694,7 +749,18 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
             println!("   这样系统才能自动获取您的Chat ID\n");
         }
 
-        // 保存配置到文件
+        // 显示LLM选择界面
+        println!("🤖 配置AI分析引擎");
+        println!("{}", "-".repeat(50));
+        println!("选择您希望使用的AI分析引擎和模式：");
+        println!();
+
+        let llm_selection = llm_selector::LlmSelector::show_selection_interface()?;
+
+        // 保存LLM选择到配置文件
+        llm_selector::LlmSelector::save_selection_to_config(&llm_selection, &args.config.to_string_lossy()).await?;
+
+        // 保存其他配置到文件
         println!("💾 正在保存配置到 config.toml...");
         save_ai_config_to_file(&args.config, &ai_config)?;
         println!("✅ 配置已保存\n");
@@ -733,6 +799,26 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
     };
 
     let mut bot = telegram_bot::TelegramBot::new(telegram_config)?;
+
+    // 自动初始化连接 - 非阻塞版本
+    println!("🤖 正在自动初始化Telegram连接...");
+    let telegram_available = match bot.auto_initialize_connection().await {
+        Ok(_) => {
+            println!("✅ Telegram连接初始化成功");
+            true
+        }
+        Err(e) => {
+            println!("⚠️ Telegram初始化失败: {}", e);
+            println!("📊 将以历史监控模式运行，Telegram功能暂时不可用");
+            false
+        }
+    };
+
+    // 如果Telegram不可用，直接运行历史监控
+    if !telegram_available {
+        println!("🔄 切换到纯监控模式...");
+        return run_history_monitor_with_status().await;
+    }
 
     // 测试连接
     println!("🔧 测试Bot连接...");
@@ -774,16 +860,14 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
         println!("⚠️ 发送启动通知失败: {}", e);
     }
 
-    // ✨ 新功能: 读取并分析历史提示词
-    println!("📖 检查历史提示词...");
-    let data_file = std::path::Path::new("./data/prompts.md");
+    // 📖 读取历史提示词但不立即分析 - 让用户通过Telegram命令定制分析方式
+    println!("📖 检查Claude历史提示词...");
+    let history_file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+        .join(".claude/history.jsonl");
 
     let gemini_config = gemini_analyzer::GeminiConfig {
         api_key: ai_config.gemini_api_key.clone(),
-        thinking_model: ai_config.thinking_model.clone(),
         fast_model: ai_config.fast_model.clone(),
-        thinking_budget: ai_config.thinking_budget,
-        auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
         system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
@@ -791,49 +875,46 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
 
     let analyzer = gemini_analyzer::GeminiAnalyzer::new(gemini_config)?;
 
-    match analyzer.read_historical_prompts(data_file).await {
-        Ok(historical_prompts) if !historical_prompts.is_empty() => {
-            println!("📊 发现 {} 条历史提示词", historical_prompts.len());
-            println!("🤖 正在生成总体点评...\n");
-
-            match analyzer.generate_overall_review(&historical_prompts).await {
-                Ok(review) => {
-                    // 格式化报告并发送到Telegram
-                    let report = format!(
-                        "📊 <b>历史提示词总体点评</b>\n\
-                        \n\
-                        📈 统计: {} 条提示词\n\
-                        ⏰ 生成时间: {}\n\
-                        \n\
-                        {}\
-                        \n\
-                        <i>--- Powered by Gemini AI ---</i>",
-                        historical_prompts.len(),
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                        review.replace("**", "<b>").replace("**", "</b>")
-                            .replace("*", "")  // 移除单星号
-                    );
-
-                    println!("✅ 总体点评生成完成");
-                    println!("📱 发送到Telegram...");
-
-                    if let Err(e) = bot.send_message(&report).await {
-                        println!("⚠️ 发送失败: {}", e);
-                    } else {
-                        println!("✅ 总体点评已发送到Telegram\n");
-                    }
-                }
-                Err(e) => {
-                    println!("⚠️ 生成总体点评失败: {}\n", e);
-                }
-            }
-        }
-        Ok(_) => {
-            println!("📝 暂无历史提示词数据\n");
+    // 读取历史提示词并存储计数，但不分析
+    let historical_prompts_count = match analyzer.read_claude_history(&history_file).await {
+        Ok(prompts) => {
+            let count = prompts.len();
+            println!("📊 已读取 {} 条历史提示词", count);
+            println!("💡 使用以下Telegram命令开始分析:");
+            println!("   📋 /report - 生成最近提示词的快速总体报告");
+            println!("   📊 /report-per <数量> - 分段分析历史提示词");
+            println!("   📈 /view-history - 查看历史提示词统计");
+            println!();
+            count
         }
         Err(e) => {
-            println!("⚠️ 读取历史提示词失败: {}\n", e);
+            println!("⚠️ 读取历史提示词失败: {}", e);
+            0
         }
+    };
+
+    // 发送历史统计通知到Telegram
+    let history_summary = if historical_prompts_count > 0 {
+        format!(
+            "📊 <b>系统启动完成</b>\n\n\
+            📈 历史提示词统计: {} 条\n\
+            📁 数据源: ~/.claude/history.jsonl\n\n\
+            💡 <b>可用命令:</b>\n\
+            📋 /report - 快速总体分析\n\
+            📊 /report-per &lt;数量&gt; - 分段详细分析\n\
+            📈 /view-history - 查看统计信息\n\
+            ⚙️ /status - 系统状态\n\
+            ❓ /help - 帮助信息",
+            historical_prompts_count
+        )
+    } else {
+        "📊 <b>系统启动完成</b>\n\n⚠️ 暂未发现历史提示词数据\n💡 开始使用Claude Code后，系统会自动监控新的提示词".to_string()
+    };
+
+    if let Err(e) = bot.send_message(&history_summary).await {
+        println!("⚠️ 发送历史统计失败: {}", e);
+    } else {
+        println!("✅ 历史统计已发送到Telegram");
     }
 
     // 并发运行两个任务:
@@ -862,53 +943,104 @@ async fn run_telegram_listener(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// 历史监控 - 带HTTP状态码风格输出
+/// 历史监控 - 带HTTP状态码风格输出，实时监控Claude历史文件
 async fn run_history_monitor_with_status() -> Result<()> {
     use std::collections::HashSet;
 
-    println!("📊 开始监控Claude Code提示词...");
+    println!("📊 实时监控Claude Code提示词...");
     println!();
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    let history_file = if shell.contains("zsh") {
-        format!("{}/.zsh_history", std::env::var("HOME").unwrap_or_default())
-    } else {
-        format!("{}/.bash_history", std::env::var("HOME").unwrap_or_default())
-    };
+    // 监控Claude真实历史文件
+    let claude_history_file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+        .join(".claude/history.jsonl");
+
+    if !claude_history_file.exists() {
+        println!("⚠️ Claude历史文件不存在: {}", claude_history_file.display());
+        println!("💡 请先使用Claude Code进行一些交互");
+        return Ok(());
+    }
+
+    println!("🔍 监控文件: {}", claude_history_file.display());
+    println!("⏰ 检查间隔: 3秒");
+    println!("🎯 检测语言: 中文提示词");
+    println!();
 
     let mut seen_prompts = HashSet::new();
     let mut last_size = 0u64;
 
+    // 先读取现有内容，避免重复显示历史提示词
+    if let Ok(initial_content) = tokio::fs::read_to_string(&claude_history_file).await {
+        let lines: Vec<&str> = initial_content.lines().collect();
+        for line in lines {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(display) = json.get("display").and_then(|v| v.as_str()) {
+                    let display_text = display.trim();
+                    if display_text.len() > 10
+                        && !display_text.starts_with('/')
+                        && display_text.chars().any(|c| matches!(c, '\u{4e00}'..='\u{9fff}'))
+                    {
+                        seen_prompts.insert(display_text.to_string());
+                    }
+                }
+            }
+        }
+        if let Ok(metadata) = tokio::fs::metadata(&claude_history_file).await {
+            last_size = metadata.len();
+        }
+    }
+
+    println!("✅ 监控系统已启动，等待新的Claude提示词...");
+    println!();
+
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-        if let Ok(metadata) = tokio::fs::metadata(&history_file).await {
+        // 检查文件大小变化
+        if let Ok(metadata) = tokio::fs::metadata(&claude_history_file).await {
             let current_size = metadata.len();
 
             if current_size > last_size {
-                if let Ok(content) = tokio::fs::read_to_string(&history_file).await {
-                    let filter = crate::chinese_filter::ChineseFilter::new(10, &[]).unwrap();
-                    for line in content.lines().rev().take(50) {
-                        if filter.contains_sufficient_chinese(line) {
-                            let chinese = filter.extract_chinese_content(line);
-                            if !seen_prompts.contains(&chinese) && chinese.len() >= 10 {
-                                seen_prompts.insert(chinese.clone());
+                // 文件有新内容，读取并解析
+                if let Ok(content) = tokio::fs::read_to_string(&claude_history_file).await {
+                    let lines: Vec<&str> = content.lines().collect();
 
-                                // HTTP状态码风格输出
-                                let timestamp = chrono::Local::now().format("%H:%M:%S");
-                                let preview = if chinese.len() > 60 {
-                                    format!("{}...", &chinese[..60])
-                                } else {
-                                    chinese.clone()
-                                };
+                    // 只检查新的行（从文件末尾开始）
+                    let mut new_prompts = Vec::new();
+                    for line in lines.iter().rev().take(50) {  // 检查最近50行
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                            if let Some(display) = json.get("display").and_then(|v| v.as_str()) {
+                                let display_text = display.trim();
 
-                                println!("[{}] 200 ✅ 记录成功 | {}", timestamp, preview);
-
-                                // 保存到本地
-                                if let Err(e) = save_prompt_to_local(&chinese).await {
-                                    eprintln!("[{}] 500 ❌ 保存失败 | {}", timestamp, e);
+                                // 检查是否是新的中文提示词
+                                if display_text.len() > 10
+                                    && !display_text.starts_with('/')
+                                    && !display_text.starts_with(":")
+                                    && display_text.chars().any(|c| matches!(c, '\u{4e00}'..='\u{9fff}'))
+                                    && !seen_prompts.contains(display_text)
+                                {
+                                    new_prompts.push(display_text.to_string());
+                                    seen_prompts.insert(display_text.to_string());
                                 }
                             }
+                        }
+                    }
+
+                    // 显示新发现的提示词（按时间顺序）
+                    for prompt in new_prompts.iter().rev() {
+                        let timestamp = chrono::Local::now().format("%H:%M:%S");
+                        let preview = if prompt.len() > 60 {
+                            format!("{}...", &prompt[..60])
+                        } else {
+                            prompt.clone()
+                        };
+
+                        // HTTP状态码风格输出 - 绿色
+                        println!("[\x1b[32m{}\x1b[0m] \x1b[32m200\x1b[0m ✅ 记录成功 | {}", timestamp, preview);
+
+                        // 保存到本地文件
+                        if let Err(e) = save_prompt_to_local(prompt).await {
+                            let error_timestamp = chrono::Local::now().format("%H:%M:%S");
+                            println!("[\x1b[31m{}\x1b[0m] \x1b[31m500\x1b[0m ❌ 保存失败 | {}", error_timestamp, e);
                         }
                     }
                 }
@@ -957,10 +1089,7 @@ async fn run_auto_feedback_mode(args: &Args) -> Result<()> {
     // 创建服务实例
     let gemini_config = gemini_analyzer::GeminiConfig {
         api_key: ai_config.gemini_api_key,
-        thinking_model: ai_config.thinking_model.clone(),
         fast_model: ai_config.fast_model.clone(),
-        thinking_budget: ai_config.thinking_budget,
-        auto_fallback: ai_config.auto_fallback,
         max_retries: ai_config.max_retries,
         system_prompt: ai_config.system_prompt.clone(),
         ..Default::default()
@@ -1084,7 +1213,17 @@ fn load_ai_feedback_config(_config: &Config) -> Result<AiFeedbackConfig> {
         if let Some(key_value) = parse_config_line(line) {
             match key_value.0.as_str() {
                 "enabled" => ai_config.enabled = key_value.1 == "true",
+                // LLM配置
+                "llm_provider" => ai_config.llm_provider = key_value.1,
+                "llm_mode" => ai_config.llm_mode = key_value.1,
+                // Gemini配置
                 "gemini_api_key" => ai_config.gemini_api_key = key_value.1,
+                "fast_model" => ai_config.fast_model = key_value.1,
+                // Perplexity配置
+                "perplexity_api_key" => ai_config.perplexity_api_key = key_value.1,
+                "perplexity_model" => ai_config.perplexity_model = key_value.1,
+                "perplexity_api_url" => ai_config.perplexity_api_url = key_value.1,
+                // Telegram配置
                 "telegram_bot_token" => ai_config.telegram_bot_token = key_value.1,
                 "telegram_chat_id" => ai_config.telegram_chat_id = key_value.1,
                 "daily_report_time" => ai_config.daily_report_time = key_value.1,
@@ -1093,14 +1232,6 @@ fn load_ai_feedback_config(_config: &Config) -> Result<AiFeedbackConfig> {
                         ai_config.max_prompts_per_analysis = num;
                     }
                 }
-                "thinking_model" => ai_config.thinking_model = key_value.1,
-                "fast_model" => ai_config.fast_model = key_value.1,
-                "thinking_budget" => {
-                    if let Ok(num) = key_value.1.parse::<i32>() {
-                        ai_config.thinking_budget = num;
-                    }
-                }
-                "auto_fallback" => ai_config.auto_fallback = key_value.1 == "true",
                 "max_retries" => {
                     if let Ok(num) = key_value.1.parse::<usize>() {
                         ai_config.max_retries = num;
@@ -1208,8 +1339,8 @@ fn show_ai_feedback_help() {
 
     println!("\n🎯 功能概述:");
     println!("   • 自动分析Claude提示词，提供专业改进建议");
-    println!("   • 使用Google Gemini思考模型进行深度分析");
-    println!("   • 配额不足时自动切换到快速模型");
+    println!("   • 支持Google Gemini和Perplexity AI双引擎");
+    println!("   • 可配置快速模式和高级分析模式");
     println!("   • 每日通过Telegram推送分析报告");
 
     println!("\n🔧 配置命令:");
@@ -1218,7 +1349,7 @@ fn show_ai_feedback_help() {
 
     println!("\n🧪 测试命令:");
     println!("   ./target/release/prompter --test-feedback");
-    println!("   # 测试Gemini API和Telegram Bot连接");
+    println!("   # 测试LLM API和Telegram Bot连接");
 
     println!("\n🚀 启动服务:");
     println!("   ./target/release/prompter --auto-feedback");
@@ -1228,23 +1359,13 @@ fn show_ai_feedback_help() {
     println!("   ./target/release/prompter --help-feedback");
     println!("   # 显示这个帮助页面");
 
-    println!("\n🧠 思考模型配置 (config.toml):");
+    println!("\n🔧 LLM配置 (config.toml):");
     println!("   [ai_feedback]");
-    println!("   thinking_model = \"gemini-2.5-pro\"        # 思考模型");
-    println!("   fast_model = \"gemini-1.5-flash\"                   # 快速模型");
-    println!("   thinking_budget = 1024    # 思考预算：");
-    println!("     # -1: 动态思考（AI自动调整，推荐）");
-    println!("     #  0: 关闭思考（纯快速模式）");
-    println!("     # >0: 固定思考预算（Token数量）");
-    println!("   auto_fallback = true      # 启用自动降级");
-    println!("   max_retries = 3           # 最大重试次数");
-
-    println!("\n⚡ 自动降级工作流程:");
-    println!("   1. 🧠 优先尝试思考模型 (gemini-2.5-pro)");
-    println!("   2. 🔍 检测配额/限制错误 (429, quota exceeded)");
-    println!("   3. 🔄 指数退避重试 (2^n秒间隔)");
-    println!("   4. ⚡ 降级到快速模型 (gemini-1.5-flash)");
-    println!("   5. 📊 确保分析任务完成");
+    println!("   llm_provider = \"gemini\"              # LLM提供商: gemini 或 perplexity");
+    println!("   llm_mode = \"fast\"                   # 模式: fast 或 thinking");
+    println!("   gemini_api_key = \"your-api-key\"     # Gemini API密钥");
+    println!("   perplexity_api_key = \"your-api-key\" # Perplexity API密钥");
+    println!("   max_retries = 3                     # 最大重试次数");
 
     println!("\n📱 Telegram配置:");
     println!("   1. 向 @BotFather 发送 /newbot");
@@ -1286,19 +1407,24 @@ fn confirm_action(prompt: &str) -> Result<()> {
 #[derive(Debug, Clone)]
 struct AiFeedbackConfig {
     enabled: bool,
+    // LLM配置
+    llm_provider: String,
+    llm_mode: String,
+    // Gemini配置
     gemini_api_key: String,
+    fast_model: String,
+    // Perplexity配置
+    perplexity_api_key: String,
+    perplexity_model: String,
+    perplexity_api_url: String,
+    // Telegram配置
     telegram_bot_token: String,
     telegram_chat_id: String,
     daily_report_time: String,
     max_prompts_per_analysis: usize,
     prompts_file_path: String,
-    // 新增思考模型配置
-    thinking_model: String,
-    fast_model: String,
-    thinking_budget: i32,
-    auto_fallback: bool,
     max_retries: usize,
-    // 系统提示词 - 用于指导Gemini如何分析用户提示词
+    // 系统提示词 - 用于指导AI如何分析用户提示词
     system_prompt: String,
 }
 
@@ -1306,16 +1432,22 @@ impl Default for AiFeedbackConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            // LLM配置
+            llm_provider: "gemini".to_string(),
+            llm_mode: "fast".to_string(),
+            // Gemini配置
             gemini_api_key: String::new(),
+            fast_model: "gemini-2.5-flash".to_string(),
+            // Perplexity配置
+            perplexity_api_key: String::new(),
+            perplexity_model: "sonar-reasoning".to_string(),
+            perplexity_api_url: "https://api.perplexity.ai".to_string(),
+            // Telegram配置
             telegram_bot_token: String::new(),
             telegram_chat_id: String::new(),
             daily_report_time: "09:00".to_string(),
             max_prompts_per_analysis: 50,
             prompts_file_path: "./data/claude_history_prompts.md".to_string(),
-            thinking_model: "gemini-2.5-pro".to_string(),
-            fast_model: "gemini-1.5-flash".to_string(),
-            thinking_budget: 1024,
-            auto_fallback: true,
             max_retries: 3,
             system_prompt: Self::default_system_prompt(),
         }
@@ -1323,44 +1455,76 @@ impl Default for AiFeedbackConfig {
 }
 
 impl AiFeedbackConfig {
-    /// 默认的系统提示词 - 指导Gemini如何分析Claude Code提示词
+    /// 默认的系统提示词 - LLM提示词审阅分析员
     fn default_system_prompt() -> String {
-        r#"你是一位专业的AI提示词(Prompt)优化专家，专门负责审视用户与编码模型Claude Code的交互。
+        r#"你是一名专业的 LLM 提示词审阅分析员。请基于今天抓取到的所有"我与 Claude Code 的提示词交互记录"，输出一份可在 1 分钟内阅读完毕的日报式总结。按照以下要求生成内容：
 
-你的职责是：
+1. **关键不足与改进建议（最重要）**
+   * 用简洁、结构化的方式指出用户提示词在表达、目标定义、约束条件、输入结构、示例、可执行性、可复用性等方面的不足。
+   * 每条给出明确、可操作的改写建议。
+   * 参考 OpenAI/Anthropic 官方文档与研究中的提示词最佳实践（如：清晰指令、层级化结构、角色设定、输入输出示例、约束条件、逐步推理等）。
 
-1. **评估提示词质量**
-   - 分析提示词的清晰度、完整性和有效性
-   - 识别提示词是否遵循LLM最佳实践
-   - 评估是否包含足够的上下文和具体要求
+2. **亮点与优秀交互案例**
+   * 选出当天 1–3 个做得特别好的提示词或交互，并说明为何有效（与最佳实践的对齐点）。
 
-2. **给出改进建议**
-   - 对不足或不够清楚的提示词提出具体、可操作的优化建议
-   - 指出缺失的关键信息或上下文
-   - 提供改写示例(如有必要)
+3. **总体模式洞察**
+   * 简要概括用户近期提示词风格的趋势：典型误区、优势、可优化方向。
 
-3. **肯定优秀实践**
-   - 识别并肯定用户优秀的提示词写法
-   - 说明为什么这些提示词写得好
-   - 鼓励继续使用有效的沟通模式
+4. **风格要求**
+   * 简洁精炼、无废话；整体阅读时间不超过2分钟。
+   * 按条列形式组织，不要冗长解释。
+   * 聚焦任务性、结构化、可执行。
+   * 不用markdown语法，直接输出即可。
 
-4. **遵循LLM最佳实践**
-   - 具体性：提示词应该明确、具体，而非模糊笼统
-   - 结构性：复杂任务应该分步骤说明
-   - 上下文：提供足够的背景信息
-   - 约束条件：明确说明限制和期望
-   - 示例：在合适时提供示例
+输出格式如下（严格遵守）：
 
-5. **输出格式**
-   - 用中文回复，简洁专业
-   - 重点突出，直击要害
-   - 控制在200-400字之间
-   - 使用Markdown格式化
+【不足与改进】
+* …
+* …
 
-注意事项：
-- 保持客观、建设性的语气
-- 不要过度批评，而是提供实用建议
-- 对于已经很好的提示词，简短肯定即可
-- 对于有明显问题的提示词，给出3-5条具体改进建议"#.to_string()
+【亮点案例】
+* …
+
+【总体洞察】
+* …"#.to_string()
     }
+}
+
+/// 全局进程监控模式 - 监控所有终端中的Claude相关进程
+async fn run_global_process_monitor(args: &Args) -> Result<()> {
+    println!("🌍 启动全局进程监控模式...");
+
+    // 加载配置
+    let config = load_config(&args.config)?;
+
+    // 创建中文过滤器
+    let chinese_filter = chinese_filter::ChineseFilter::new(
+        config.filter.min_chinese_chars,
+        &config.filter.exclude_commands,
+    )?;
+
+    // 创建全局进程监控器
+    let mut global_monitor = global_process_monitor::GlobalProcessMonitor::new(chinese_filter)?;
+
+    println!("🌐 全局进程监控已启动，正在监控所有终端的Claude进程:");
+    println!("  - 所有Claude相关进程检测");
+    println!("  - 跨终端命令行参数捕获");
+    println!("  - 环境变量中文内容监控");
+    #[cfg(target_os = "macos")]
+    println!("  - macOS剪贴板监控");
+    println!("📁 中文输入将保存到: ./data/global_claude_prompts.md");
+    println!("⏰ 扫描间隔: 3秒");
+    println!();
+    println!("🔧 如需结合自动上传功能，请使用: --auto --global-monitor");
+    println!("⏹️ 按 Ctrl+C 停止监控");
+    println!();
+
+    // 启动全局监控
+    global_monitor.start_global_monitoring().await?;
+
+    // 等待中断信号
+    tokio::signal::ctrl_c().await?;
+    println!("⏹️ 全局进程监控服务已停止");
+
+    Ok(())
 }

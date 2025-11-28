@@ -9,10 +9,7 @@ use std::path::Path;
 pub struct GeminiConfig {
     pub api_key: String,
     pub api_url: String,
-    pub thinking_model: String,        // 思考模型
     pub fast_model: String,           // 快速模型
-    pub thinking_budget: i32,         // 思考预算
-    pub auto_fallback: bool,          // 自动降级
     pub max_retries: usize,           // 最大重试次数
     pub system_prompt: String,        // 系统提示词
 }
@@ -22,10 +19,7 @@ impl Default for GeminiConfig {
         Self {
             api_key: String::new(),
             api_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-            thinking_model: "gemini-2.5-pro".to_string(),       // 默认思考模型
-            fast_model: "gemini-1.5-flash".to_string(),         // 默认快速模型
-            thinking_budget: 1024,                              // 默认思考预算
-            auto_fallback: true,                                // 默认启用自动降级
+            fast_model: "gemini-2.5-flash".to_string(),         // 默认快速模型
             max_retries: 3,                                     // 默认最大重试3次
             system_prompt: String::new(),                       // 默认空,由调用方提供
         }
@@ -153,7 +147,7 @@ impl GeminiAnalyzer {
         Ok(analyses)
     }
 
-    /// 分析单个提示词（支持思考模型和自动降级）
+    /// 分析单个提示词（仅使用快速模型）
     async fn analyze_single_prompt(&self, prompt: &str) -> Result<PromptAnalysis> {
         // 使用系统提示词 + 用户提示词内容
         let analysis_prompt = if !self.config.system_prompt.is_empty() {
@@ -178,70 +172,13 @@ impl GeminiAnalyzer {
             )
         };
 
-        // 先尝试使用思考模型
-        match self.try_thinking_model(&analysis_prompt).await {
-            Ok(analysis) => {
-                println!("🧠 使用思考模型分析成功");
-                Ok(analysis)
-            }
-            Err(e) => {
-                println!("⚠️ 思考模型失败: {}", e);
-
-                if self.config.auto_fallback {
-                    println!("🔄 自动切换到快速模型...");
-                    self.try_fast_model(&analysis_prompt).await
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    /// 尝试使用思考模型
-    async fn try_thinking_model(&self, prompt: &str) -> Result<PromptAnalysis> {
-        let mut retries = 0;
-
-        while retries <= self.config.max_retries {
-            match self.call_gemini_api(&self.config.thinking_model, prompt, Some(self.config.thinking_budget)).await {
-                Ok(feedback) => {
-                    let suggestions_count = feedback.matches("建议").count() +
-                                          feedback.matches("改进").count() +
-                                          feedback.matches("优化").count();
-
-                    return Ok(PromptAnalysis {
-                        timestamp: Local::now(),
-                        original_prompt: prompt.to_string(),
-                        gemini_feedback: feedback,
-                        suggestions_count: suggestions_count.max(1),
-                    });
-                }
-                Err(e) => {
-                    retries += 1;
-
-                    // 检查是否是配额错误
-                    let error_msg = e.to_string();
-                    if error_msg.contains("quota") || error_msg.contains("rate") || error_msg.contains("429") {
-                        println!("⚠️ 思考模型配额不足，第{}次重试失败", retries);
-                        if retries > self.config.max_retries {
-                            return Err(anyhow::anyhow!("思考模型配额耗尽"));
-                        }
-                        // 等待后重试
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(retries as u32))).await;
-                        continue;
-                    } else {
-                        // 非配额错误，直接返回
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!("思考模型重试次数已耗尽"))
+        // 直接使用快速模型
+        self.try_fast_model(&analysis_prompt).await
     }
 
     /// 尝试使用快速模型
     async fn try_fast_model(&self, prompt: &str) -> Result<PromptAnalysis> {
-        let feedback = self.call_gemini_api(&self.config.fast_model, prompt, Some(0)).await?; // 快速模型关闭思考
+        let feedback = self.call_gemini_api(&self.config.fast_model, prompt, None).await?; // 快速模型
 
         let suggestions_count = feedback.matches("建议").count() +
                               feedback.matches("改进").count() +
@@ -373,35 +310,80 @@ impl GeminiAnalyzer {
                 .join("\n\n")
         );
 
-        // 优先使用思考模型进行深度分析
-        let review = match self.try_thinking_model(&combined_prompt).await {
+        // 使用快速模型进行分析
+        let review = match self.try_fast_model(&combined_prompt).await {
             Ok(analysis) => {
-                println!("✅ 总体点评分析完成(思考模型)");
+                println!("✅ 总体点评分析完成(快速模型)");
                 analysis.gemini_feedback
             }
             Err(e) => {
-                println!("⚠️ 思考模型失败: {}", e);
-                if self.config.auto_fallback {
-                    println!("🔄 切换到快速模型...");
-                    match self.try_fast_model(&combined_prompt).await {
-                        Ok(analysis) => {
-                            println!("✅ 总体点评分析完成(快速模型)");
-                            analysis.gemini_feedback
-                        }
-                        Err(e2) => {
-                            return Err(anyhow!("总体分析失败: {}", e2));
-                        }
-                    }
-                } else {
-                    return Err(e);
-                }
+                return Err(anyhow!("总体分析失败: {}", e));
             }
         };
 
         Ok(review)
     }
 
-    /// 从本地文件读取历史提示词(运行软件前的历史数据)
+    /// 从Claude历史文件读取真正的历史提示词
+    pub async fn read_claude_history(&self, history_file: &Path) -> Result<Vec<String>> {
+        if !history_file.exists() {
+            println!("📝 Claude历史文件不存在: {}", history_file.display());
+            return Ok(Vec::new());
+        }
+
+        println!("🔍 读取Claude历史文件: {}", history_file.display());
+
+        let content = tokio::fs::read_to_string(history_file).await
+            .map_err(|e| anyhow!("读取Claude历史文件失败: {}", e))?;
+
+        let mut prompts = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // 解析JSON行
+            match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(json) => {
+                    // 提取display字段
+                    if let Some(display) = json.get("display").and_then(|v| v.as_str()) {
+                        let display_text = display.trim();
+
+                        // 过滤掉命令和空内容
+                        if !display_text.is_empty()
+                            && !display_text.starts_with('/')
+                            && !display_text.starts_with(":")
+                            && display_text.len() > 10  // 至少10个字符
+                            && self.contains_chinese(display_text)  // 包含中文
+                        {
+                            prompts.push(display_text.to_string());
+                        }
+                    }
+                }
+                Err(_) => {
+                    // 忽略解析失败的行
+                    continue;
+                }
+            }
+        }
+
+        // 去重并限制数量（避免内容过多）
+        prompts.sort();
+        prompts.dedup();
+
+        // 只取最近的50条（避免分析时间过长和API配额问题）
+        if prompts.len() > 50 {
+            prompts = prompts.into_iter().rev().take(50).collect();
+        }
+
+        println!("📖 从Claude历史中提取到 {} 条中文提示词", prompts.len());
+        Ok(prompts)
+    }
+
+    /// 从本地文件读取历史提示词(运行软件前的历史数据) - 已废弃，使用read_claude_history
+    #[deprecated(note = "Use read_claude_history instead")]
     pub async fn read_historical_prompts(&self, file_path: &Path) -> Result<Vec<String>> {
         if !file_path.exists() {
             println!("📝 历史提示词文件不存在: {}", file_path.display());
@@ -411,52 +393,59 @@ impl GeminiAnalyzer {
         let content = tokio::fs::read_to_string(file_path).await
             .map_err(|e| anyhow!("读取历史文件失败: {}", e))?;
 
-        // 从Markdown格式提取提示词
-        let mut prompts = Vec::new();
+        // 解析实际的Markdown格式：## 时间戳 + 提示词内容 + ---分隔符
         let lines: Vec<&str> = content.lines().collect();
+        let mut prompts = Vec::new();
+        let mut current_prompt = String::new();
+        let mut expecting_content = false;
 
-        let mut i = 0;
-        while i < lines.len() {
-            let line = lines[i].trim();
+        for line in lines {
+            let trimmed = line.trim();
 
-            // 查找时间戳行 (## 2024-11-24 21:30:15)
-            if line.starts_with("##") && line.contains("20") {
-                // 跳过空行
-                i += 1;
-                while i < lines.len() && lines[i].trim().is_empty() {
-                    i += 1;
+            // 检测时间戳行，表示新的提示词条目开始
+            if trimmed.starts_with("## 20") {
+                // 保存上一个提示词
+                if !current_prompt.trim().is_empty() {
+                    prompts.push(current_prompt.trim().to_string());
                 }
+                current_prompt.clear();
+                expecting_content = true;
+                continue;
+            }
 
-                // 收集提示词内容(直到遇到分隔线或下一个时间戳)
-                let mut prompt_content = String::new();
-                while i < lines.len() {
-                    let content_line = lines[i].trim();
-
-                    if content_line == "---" || content_line.starts_with("##") {
-                        break;
-                    }
-
-                    if !content_line.is_empty() {
-                        if !prompt_content.is_empty() {
-                            prompt_content.push(' ');
-                        }
-                        prompt_content.push_str(content_line);
-                    }
-
-                    i += 1;
+            // 检测分隔符，表示当前提示词结束
+            if trimmed == "---" {
+                if !current_prompt.trim().is_empty() {
+                    prompts.push(current_prompt.trim().to_string());
                 }
+                current_prompt.clear();
+                expecting_content = false;
+                continue;
+            }
 
-                // 添加非空的提示词
-                if !prompt_content.is_empty() && prompt_content.len() >= 10 {
-                    prompts.push(prompt_content);
+            // 如果期待内容并且不是空行，收集提示词内容
+            if expecting_content && !trimmed.is_empty() {
+                if !current_prompt.is_empty() {
+                    current_prompt.push(' ');
                 }
-            } else {
-                i += 1;
+                current_prompt.push_str(trimmed);
             }
         }
 
-        println!("📖 读取到 {} 条历史提示词", prompts.len());
-        Ok(prompts)
+        // 添加最后一个提示词（如果文件结尾没有分隔符）
+        if !current_prompt.trim().is_empty() {
+            prompts.push(current_prompt.trim().to_string());
+        }
+
+        // 过滤掉太短的提示词和非中文提示词
+        let filtered_prompts: Vec<String> = prompts
+            .into_iter()
+            .filter(|p| p.chars().count() > 5) // 至少5个字符
+            .filter(|p| self.contains_chinese(p)) // 包含中文
+            .collect();
+
+        println!("📖 读取到 {} 条历史提示词", filtered_prompts.len());
+        Ok(filtered_prompts)
     }
 
     /// 生成分析报告
@@ -508,34 +497,17 @@ impl GeminiAnalyzer {
 
         let test_prompt = "你好，请回复一个简短的测试消息。";
 
-        // 先测试思考模型
-        match self.call_gemini_api(&self.config.thinking_model, test_prompt, Some(self.config.thinking_budget)).await {
+        // 测试快速模型
+        match self.call_gemini_api(&self.config.fast_model, test_prompt, None).await {
             Ok(_) => {
-                println!("✅ 思考模型 ({}) 连接成功！", self.config.thinking_model);
+                println!("✅ 快速模型 ({}) 连接成功！", self.config.fast_model);
                 return Ok(());
             }
             Err(e) => {
-                println!("⚠️ 思考模型连接失败: {}", e);
-
-                if self.config.auto_fallback {
-                    println!("🔄 尝试快速模型...");
-
-                    // 测试快速模型
-                    match self.call_gemini_api(&self.config.fast_model, test_prompt, Some(0)).await {
-                        Ok(_) => {
-                            println!("✅ 快速模型 ({}) 连接成功！", self.config.fast_model);
-                            return Ok(());
-                        }
-                        Err(e2) => {
-                            return Err(anyhow::anyhow!(
-                                "思考模型和快速模型都连接失败。\n思考模型错误: {}\n快速模型错误: {}",
-                                e, e2
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(e);
-                }
+                return Err(anyhow::anyhow!(
+                    "快速模型连接失败: {}",
+                    e
+                ));
             }
         }
     }

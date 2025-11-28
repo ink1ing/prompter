@@ -5,6 +5,13 @@ edition = "2021"
 description = "A lightweight local terminal app to monitor and save Claude Code CLI prompts"
 authors = ["Your Name <your.email@example.com>"]
 
+# 隐藏编译警告以获得更清洁的输出
+[profile.dev]
+warnings = "allow"
+
+[profile.release]
+warnings = "allow"
+
 [lib]
 name = "prompter"
 path = "src/lib.rs"
@@ -32,3 +39,4 @@ base64 = "0.21"
 url = "2.4"
 webbrowser = "0.8"
 dirs = "5.0"
+psutil = { version = "3.3.0", default-features = false, features = ["process"] }
