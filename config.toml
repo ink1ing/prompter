@@ -42,17 +42,17 @@ llm_provider = "perplexity"
 llm_mode = "fast"
 
 # Gemini API配置
-gemini_api_key = "AIzaSyB0UzfaoPHNtK8f3UcllFxEJYeggls_5I8"
+gemini_api_key = "YOUR_GEMINI_API_KEY"
 fast_model = "gemini-2.5-flash"                           # 快速模型（仅使用快速模型）
 
 # Perplexity API配置
-perplexity_api_key = "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"
+perplexity_api_key = "YOUR_PERPLEXITY_API_KEY"
 perplexity_model = "sonar-reasoning"                      # Perplexity模型: "sonar" 或 "sonar-reasoning"
 perplexity_api_url = "https://api.perplexity.ai"         # Perplexity API地址
 
 # Telegram配置
-telegram_bot_token = "8120640865:AAEbb9OpJ2LbH6jktChbbnu11KuIB-XdD6o"            # Telegram Bot Token
-telegram_chat_id = "8200837007"              # Chat ID
+telegram_bot_token = "YOUR_TELEGRAM_BOT_TOKEN"            # Telegram Bot Token
+telegram_chat_id = "YOUR_TELEGRAM_CHAT_ID"              # Chat ID
 daily_report_time = "09:00"        # 每日推送时间
 max_prompts_per_analysis = 50      # 单次分析最大提示词数量
 max_retries = 3                                            # 最大重试次数
